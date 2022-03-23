@@ -1,0 +1,21 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Tensorflow: Example",
+            "type": "python",
+            "request": "launch",
+            "module": "source.mains.example_main",
+            "justMyCode": true,
+            "args": [
+                "--config",
+                "${workspaceFolder}/source/configs/example_config.json",
+                "--save_root",
+                "${workspaceFolder}/saved/"
+            ]
+        },
+    ]
+}

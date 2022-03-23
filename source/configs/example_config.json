@@ -1,0 +1,16 @@
+{
+    "exp_name": "example",
+    "training": {
+        "learning_rate": 0.001,
+        "batch_size": 100,
+        "num_epochs": 5,
+        "num_iter_per_epoch": 60,
+        "verbose_epochs": 1
+    },
+    "save": {
+        "checkpoint": {
+            "max_to_keep": 5,
+            "checkpoint_interval": 2
+        }
+    }
+}
