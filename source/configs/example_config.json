@@ -1,5 +1,11 @@
 {
     "exp_name": "example",
+    "audio": {
+        "rate_sample": 48000,
+        "nb_freqs": 512,
+        "size_win": 256,
+        "stride_win": 128
+    },
     "training": {
         "learning_rate": 0.001,
         "batch_size": 100,
@@ -7,7 +13,7 @@
         "num_iter_per_epoch": 60
     },
     "dataset": {
-        "name": "groove",
+        "name": "canonne_duos",
         "validation_split": 0.1
     },
     "save": {

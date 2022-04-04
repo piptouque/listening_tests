@@ -2,8 +2,9 @@
 
 from pathlib import Path
 import re
-from typing import Callable, Tuple, List
+from typing import Callable
 
+import librosa
 import pandas as pd
 import numpy as np
 import numpy.typing as npt
@@ -21,7 +22,6 @@ It should also contain any processing which has been applied (if any),
 (e.g. corrupted example skipped, images cropped,...):
 """
 
-# TODO(canonne_duos): BibTeX citation
 _CITATION = """
 @article{golvetFamiliarityCopresenceIncrease2021,
   title = {With, against, or without? {{Familiarity}} and Copresence Increase Interactional Dissensus and Relational Plasticity in Freely Improvising Duos.},
@@ -44,8 +44,8 @@ _NB_TAKES = 4
 _NB_INTERPRETS = 2
 
 _RATE_AUDIO = 48000
-_SIZE_BLOCKS = _RATE_AUDIO * 10
-_DTYPE_AUDIO = tf.int16
+_SIZE_BLOCKS = _RATE_AUDIO * 2
+_DTYPE_AUDIO = tf.float32
 
 _RATE_ANNOTATION = 4
 
@@ -89,13 +89,13 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
             description=_DESCRIPTION,
             features=tfds.features.FeaturesDict({
                 # These are the features of your dataset like images, labels ...
-                'audio': tfds.features.Audio(shape=(None,), file_format='wav', sample_rate=_RATE_AUDIO),
-                'annotation': {
-                    'x_play': tfds.features.Tensor(shape=(None,), dtype=tf.dtypes.float32),
-                    'y_play': tfds.features.Tensor(shape=(None,), dtype=tf.dtypes.float32),
-                    'dir_play': tfds.features.Tensor(shape=(None,), dtype=tf.dtypes.int8),
+                'audio': tfds.features.Audio(shape=(_SIZE_BLOCKS, 1), file_format='wav', sample_rate=_RATE_AUDIO, dtype=tf.float32),
+                'annotations': {
+                    'x_play': tfds.features.Tensor(shape=(_SIZE_BLOCKS, 1), dtype=tf.dtypes.float32),
+                    'y_play': tfds.features.Tensor(shape=(_SIZE_BLOCKS, 1), dtype=tf.dtypes.float32),
+                    'dir_play': tfds.features.Tensor(shape=(_SIZE_BLOCKS, 1), dtype=tf.dtypes.int8),
                 },
-                'label': {
+                'labels': {
                     'idx_duo': tfds.features.ClassLabel(num_classes=_NB_DUOS),
                     'idx_take': tfds.features.ClassLabel(num_classes=_NB_TAKES),
                     'idx_interpret': tfds.features.ClassLabel(num_classes=_NB_INTERPRETS),
@@ -141,8 +141,12 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
                 m_file = pat_file.match(p.name)
                 if m_file is not None:
                     #
-                    audio = tfio.audio.decode_wav(
-                        p.read_bytes(), dtype=_DTYPE_AUDIO)
+                    x_audio = tfio.audio.decode_wav(
+                        p.read_bytes(), dtype=tf.int16)
+                    # trancode to float
+                    arr_audio = librosa.util.buf_to_float(
+                        x_audio.numpy(), dtype=np.float32)
+                    x_audio = tf.convert_to_tensor(arr_audio)
                     #  Figure out the annotations
                     g_file = m_file.groupdict()
                     label_instrument = g_file['instrument']
@@ -152,35 +156,38 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
                     idx_interpret = int(g_file['interpret'])-1
                     df_ann = ann_dict[idx_duo+1][idx_take+1]
                     #
-                    t_play = df_ann.get('time').to_numpy()
-                    x_play = df_ann.get(
+                    ann_t_play = df_ann.get('time').to_numpy()
+                    ann_x_play = df_ann.get(
                         f'x{idx_interpret+1}').to_numpy().astype(np.float32)
-                    y_play = df_ann.get(
+                    ann_y_play = df_ann.get(
                         f'y{idx_interpret+1}').to_numpy().astype(np.float32)
-                    dir_play = df_ann.get(
+                    ann_dir_play = df_ann.get(
                         f'zone{idx_interpret+1}').map(_MAP_LABELS_PLAYING).to_numpy().astype(np.int8)
                     # Resample the annotations to the audio sample rate
-                    x_play = self._fit_annotations(x_play, t_play, audio)
-                    y_play = self._fit_annotations(y_play, t_play, audio)
-                    dir_play = self._fit_annotations(dir_play, t_play, audio)
+                    ann_x_play = self._fit_annotations(
+                        ann_x_play, ann_t_play, x_audio)
+                    ann_y_play = self._fit_annotations(
+                        ann_y_play, ann_t_play, x_audio)
+                    ann_dir_play = self._fit_annotations(
+                        ann_dir_play, ann_t_play, x_audio)
                     #  Split the audio into blocks of required length
-                    audio_split = self._split_droplast(
-                        audio, _SIZE_BLOCKS)
-                    x_play_split = self._split_droplast(
-                        x_play, _SIZE_BLOCKS)
-                    y_play_split = self._split_droplast(
-                        y_play, _SIZE_BLOCKS)
-                    dir_play_split = self._split_droplast(
-                        dir_play, _SIZE_BLOCKS)
-                    for i in range(audio_split.shape[0]):
+                    x_audio_split = self._split_droplast(
+                        x_audio, _SIZE_BLOCKS)
+                    ann_x_play_split = self._split_droplast(
+                        ann_x_play, _SIZE_BLOCKS)
+                    ann_y_play_split = self._split_droplast(
+                        ann_y_play, _SIZE_BLOCKS)
+                    ann_dir_play_split = self._split_droplast(
+                        ann_dir_play, _SIZE_BLOCKS)
+                    for i in range(x_audio_split.shape[0]):
                         yield f'{p.name}_{i}', {
-                            'audio': audio_split[i],
-                            'annotation': {
-                                'x_play': x_play_split[i],
-                                'y_play': y_play_split[i],
-                                'dir_play': dir_play_split[i]
+                            'audio': np.expand_dims(x_audio_split[i], axis=-1),
+                            'annotations': {
+                                'x_play': np.expand_dims(ann_x_play_split[i], axis=-1),
+                                'y_play': np.expand_dims(ann_y_play_split[i], axis=-1),
+                                'dir_play': np.expand_dims(ann_dir_play_split[i], axis=-1),
                             },
-                            'label': {
+                            'labels': {
                                 'idx_duo': idx_duo,
                                 'idx_take': idx_take,
                                 'idx_interpret': idx_interpret,
@@ -231,7 +238,7 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
         return x_split
 
     @ staticmethod
-    def _fit_annotations(x_ann: np.ndarray, t_ann: npt.NDArray[float], x_audio: npt.NDArray[_DTYPE_AUDIO]) -> np.ndarray:
+    def _fit_annotations(x_ann: np.ndarray, t_ann: npt.NDArray[float], x_audio: npt.NDArray[np.float32]) -> np.ndarray:
         """_summary_
 
         Args:

@@ -25,12 +25,12 @@ if __name__ == '__main__':
     # data = DataGenerator(config)
     # ds_train, ds_val = ExampleDatasetGenerator(config)()
     ds_train, ds_val = tfds.load('canonne_duos', split=[
-                                 'train[90%:', 'train[:10%'])
+                                 'train[90%:]', 'train[:10%]'])
 
     # create an instance of the model you want
     # model = ExampleModel(config)
-    model = ExampleModel()
-    model.compile()
+    model = ExampleModel(config)
+    model.compile(run_eagerly=True)
     # Callbacks
     cb_log = tf.keras.callbacks.TensorBoard(
         config.save.path.log_dir,
