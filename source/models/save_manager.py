@@ -1,7 +1,5 @@
 import tensorflow as tf
 
-from .example_model import ExampleModel
-
 from typing import Optional
 
 
@@ -9,7 +7,7 @@ class SaveManager:
     """Saving and loading model checkpoints
     """
 
-    def __init__(self, config: object, model: ExampleModel, epoch_counter: Optional[tf.Variable] = None, **kwargs):
+    def __init__(self, config: object, model: tf.keras.Model, epoch_counter: Optional[tf.Variable] = None, **kwargs):
         self._config = config
         self._checkpoint = tf.train.Checkpoint(model, **kwargs)
         self._checkpoint_manager = tf.train.CheckpointManager(

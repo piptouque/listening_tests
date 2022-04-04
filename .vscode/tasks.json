@@ -1,0 +1,14 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build_dataset_canonne_duos",
+            "command": "tfds build ${workspaceFolder}/source/datasets/canonne_duos",
+            "args": [
+                "--manual_dir",
+                "${workspaceFolder}/data/bdd_canonne_2022/corpus_duos"
+            ],
+            "type": "shell",
+        }
+    ]
+}

@@ -5,10 +5,11 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Tensorflow: Example",
+            "name": "Tensorflow: Train Example",
             "type": "python",
             "request": "launch",
-            "module": "source.mains.example_main",
+            "program": "${workspaceFolder}/source/train.py",
+            "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
                 "--config",
@@ -16,6 +17,6 @@
                 "--save_root",
                 "${workspaceFolder}/saved/"
             ]
-        },
+        }
     ]
 }

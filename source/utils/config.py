@@ -20,8 +20,8 @@ def get_config_from_json(path: str):
 def process_config(args):
     config = get_config_from_json(args.config)
     config.save.path = SimpleNamespace()
-    config.save.path.summary_dir = os.path.join(
-        args.save_root, config.exp_name, "summary/")
+    config.save.path.log_dir = os.path.join(
+        args.save_root, config.exp_name, "log/")
     config.save.path.checkpoint_dir = os.path.join(
         args.save_root, config.exp_name, "checkpoint/")
     return config
