@@ -2,9 +2,22 @@
     "exp_name": "example",
     "audio": {
         "rate_sample": 48000,
-        "nb_freqs": 512,
-        "size_win": 256,
-        "stride_win": 128
+        "nb_freqs": 1024,
+        "size_win": 1024,
+        "stride_win": 256,
+        "nb_mel_freqs": 64,
+        "freq_min": 20,
+        "freq_max": 20000,
+        "size_kernel": 3,
+        "sigma": 1
+    },
+    "model": {
+        "cnn": {
+            "size_kernel": [
+                3,
+                3
+            ]
+        }
     },
     "training": {
         "rate_learning": 0.001,

@@ -1,84 +1,116 @@
+from typing import Tuple, Dict
 
 import tensorflow as tf
 import tensorflow_io as tfio
 
 import librosa
 
-from typing import Tuple, Dict
 
-
-class AudioPreprocessor(tf.keras.Model):
+def _compute_annotation_spectrum(x_ann: tf.Tensor, size_win: int, stride_win: int) -> tf.Tensor:
     """Has to be `run_eagerly`'d, because it uses librosa functions.
     """
+    x_ann_spec = tf.convert_to_tensor(librosa.util.frame(
+        x_ann.numpy(),
+        frame_length=size_win,
+        hop_length=stride_win,
+        axis=0
+    ), dtype=x_ann.dtype)
+    return x_ann_spec
 
-    def __init__(self, config: object):
-        super(AudioPreprocessor, self).__init__()
-        self._config = config.audio
+def preprocess_audio(
+        x_audio: tf.Tensor,
+        x_ann: Dict[str, tf.Tensor],
+        config: object
+) -> Tuple[tf.Tensor, Dict[str, tf.Tensor]]:
+    """_summary_
 
-    @staticmethod
-    def _compute_annotation_spectrum(x_ann: tf.Tensor, size_win: int, stride_win: int) -> tf.Tensor:
-        x_ann_spec = tf.convert_to_tensor(librosa.util.frame(
-            x_ann.numpy(),
-            frame_length=size_win,
-            hop_length=stride_win,
-            axis=0
-        ), dtype=x_ann.dtype)
-        return x_ann_spec
+    Args:
+        x_audio (tf.Tensor): _description_
+        x_ann (Dict[str, tf.Tensor]): _description_
+        config (object): _description_
 
-    @classmethod
-    def compute_spectrum(
-            cls,
-            x_audio: tf.Tensor,
-            x_ann: Dict[str, tf.Tensor],
-            nb_freqs: int,
-            size_win: int,
-            stride_win: int) -> Tuple[tf.Tensor, Dict[str, tf.Tensor]]:
-        """_summary_
+    Returns:
+        Tuple[tf.Tensor, Dict[str, tf.Tensor]]: _description_
+    """
+    #
+    x_ann['dir_play'] = _compute_change_play(
+        x_ann['dir_play'], config.size_kernel, config.sigma)
+    #
+    x_spec, x_ann_spec = _compute_spectrum(x_audio, x_ann,
+                                                config.nb_freqs,
+                                                config.size_win,
+                                                config.stride_win
+                                                )
 
-        Args:
-            x_audio (tf.Tensor): _description_
-            x_ann (Dict[str, tf.Tensor]): _description_
-            nb_freqs (int): _description_
-            size_win (int): _description_
-            stride_win (int): _description_
+    x_mel = tf.expand_dims(
+        tfio.audio.melscale(
+            tf.squeeze(x_spec, axis=-1),
+            fmin=config.freq_min,
+            fmax=config.freq_max,
+            rate=config.rate_sample,
+            mels=config.nb_mel_freqs
+        ),
+        axis=-1
+    )
+    #
+    return x_mel, x_ann_spec
 
-        Returns:
-            Tuple[tf.Tensor, Dict[str, tf.Tensor]]: _description_
-        """
-        #
-        # Resample the annotations to the audio sample rate
-        print(x_audio.shape)
-        x_spec = tf.expand_dims(tfio.audio.spectrogram(
+def _compute_spectrum(
+        x_audio: tf.Tensor,
+        x_ann: Dict[str, tf.Tensor],
+        nb_freqs: int,
+        size_win: int,
+        stride_win: int
+) -> Tuple[tf.Tensor, Dict[str, tf.Tensor]]:
+    """_summary_
+
+    Args:
+        x_audio (tf.Tensor): _description_
+        x_ann (Dict[str, tf.Tensor]): _description_
+        nb_freqs (int): _description_
+        size_win (int): _description_
+        stride_win (int): _description_
+
+    Returns:
+        Tuple[tf.Tensor, Dict[str, tf.Tensor]]: _description_
+    """
+    #
+    # Resample the annotations to the audio sample rate
+    x_spec = tf.expand_dims(
+        tfio.audio.spectrogram(
             tf.squeeze(x_audio, axis=-1),
             nfft=nb_freqs,
             window=size_win,
-            stride=stride_win),
-            axis=-1
-        )
-        print(x_spec.shape)
-        x_ann_spec = dict()
-        # Important:
-        # Tensors inside dicts are not Eager tensors,
-        # so we have to use py_function
-        # see: https://github.com/tensorflow/tensorflow/issues/32842#issuecomment-536649134
-        x_ann_spec['x_play'] = tf.py_function(cls._compute_annotation_spectrum, [
-                                              x_ann['x_play'], size_win, stride_win], Tout=x_ann['x_play'].dtype)
-        x_ann_spec['y_play'] = tf.py_function(cls._compute_annotation_spectrum, [
-                                              x_ann['y_play'], size_win, stride_win], Tout=x_ann['y_play'].dtype)
-        x_ann_spec['dir_play'] = tf.py_function(cls._compute_annotation_spectrum, [
-                                                x_ann['dir_play'], size_win, stride_win], Tout=x_ann['dir_play'].dtype)
-        print(x_ann_spec['x_play'].shape)
+            stride=stride_win
+        ),
+        axis=-1
+    )
+    x_ann_spec = dict()
+    # Important:
+    # Tensors inside dicts are not Eager tensors,
+    # so we have to use py_function
+    # see: https://github.com/tensorflow/tensorflow/issues/32842#issuecomment-536649134
+    x_ann_spec['x_play'] = tf.py_function(_compute_annotation_spectrum, [
+        x_ann['x_play'], size_win, stride_win], Tout=x_ann['x_play'].dtype)
+    x_ann_spec['y_play'] = tf.py_function(_compute_annotation_spectrum, [
+        x_ann['y_play'], size_win, stride_win], Tout=x_ann['y_play'].dtype)
+    x_ann_spec['dir_play'] = tf.py_function(_compute_annotation_spectrum, [
+        x_ann['dir_play'], size_win, stride_win], Tout=x_ann['dir_play'].dtype)
 
-        return (x_spec, x_ann_spec)
+    return (x_spec, x_ann_spec)
 
-    def call(self, x_audio: tf.Tensor, x_ann: Dict[str, tf.Tensor]) -> Tuple[tf.Tensor, Dict[str, tf.Tensor]]:
-        """_summary_
+def _compute_change_play(x_dir_play: tf.Tensor, size_kernel: tf.Tensor, sigma: tf.Tensor) -> tf.Tensor:
+    """_summary_
 
-        Args:
-            x_audio (tf.Tensor): _description_
-            x_ann (Dict[str, tf.Tensor]): _description_
+    Args:
+        x_ann_dir_play (tf.Tensor): _description_
 
-        Returns:
-            Tuple[tf.Tensor, Dict[str, tf.Tensor]]: _description_
-        """
-        return self.compute_spectrum(x_audio, x_ann, self._config.nb_freqs, self._config.size_win, self._config.stride_win)
+    Returns:
+        tf.Tensor: _description_
+    """
+    x_change_play = x_dir_play - tf.roll(x_dir_play, shift=1, axis=-2)
+    x_change_play = tf.cast(tf.abs(x_change_play), tf.float32)
+    # gaussian smoothing
+    x_change_play = tf.squeeze(tfio.experimental.filter.gaussian(
+        tf.reshape(x_change_play, [1, 1, *x_change_play.get_shape().as_list()]), ksize=size_kernel, sigma=sigma), axis=(0, 1))
+    return x_change_play
