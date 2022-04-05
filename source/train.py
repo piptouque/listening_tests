@@ -4,7 +4,7 @@ import tensorflow_datasets as tfds
 
 from data_loaders.example_data_loader import ExampleDatasetGenerator
 from data_loaders.preprocessing import preprocess_audio
-from models.models import ConvolutionalEmbedding, NonLinearRegression
+from models.models import ConvolutionalEncoder, NonLinearRegression
 from utils.dirs import create_dirs
 from utils.config import process_config
 from utils.utils import get_args
@@ -43,7 +43,7 @@ if __name__ == '__main__':
     ds_val = ds_val.map(_preprocess).batch(config.training.size_batch)
     # create an instance of the model you want
     model = tf.keras.Sequential()
-    model.add(ConvolutionalEmbedding(config))
+    model.add(ConvolutionalEncoder(config))
     model.add(NonLinearRegression(config))
     model.compile(
         loss=tf.keras.losses.MeanSquaredError(),
