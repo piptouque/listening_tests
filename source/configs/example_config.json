@@ -7,8 +7,8 @@
         "stride_win": 128
     },
     "training": {
-        "learning_rate": 0.001,
-        "batch_size": 100,
+        "rate_learning": 0.001,
+        "size_batch": 8,
         "num_epochs": 5,
         "num_iter_per_epoch": 60
     },
@@ -24,5 +24,8 @@
             "max_to_keep": 5,
             "checkpoint_interval": 2
         }
+    },
+    "debug": {
+        "enabled": true
     }
 }

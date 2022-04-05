@@ -3,7 +3,8 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 
 from data_loaders.example_data_loader import ExampleDatasetGenerator
-from models.example_model import ExampleModel
+from data_loaders.preprocessing import AudioPreprocessor
+from models.models import ExampleModel
 from utils.dirs import create_dirs
 from utils.config import process_config
 from utils.utils import get_args
@@ -27,10 +28,24 @@ if __name__ == '__main__':
     ds_train, ds_val = tfds.load('canonne_duos', split=[
                                  'train[90%:]', 'train[:10%]'])
 
+    # Add preprocessing of data
+    # preprocessor = AudioPreprocessor(config)
+    # preprocessor.compile(run_eagerly=True)
+
+    def _preprocess(inputs: dict) -> dict:
+        x_spec, x_ann_spec = AudioPreprocessor.compute_spectrum(
+            inputs['audio'], inputs['annotations'],
+            config.audio.nb_freqs, config.audio.size_win, config.audio.stride_win)
+        inputs['spec'] = x_spec
+        inputs['ann_spec'] = x_ann_spec
+        return inputs
+    ds_train = ds_train.map(_preprocess).batch(
+        config.training.size_batch).prefetch(tf.data.AUTOTUNE)
+    ds_val = ds_val.map(_preprocess).batch(config.training.size_batch)
     # create an instance of the model you want
     # model = ExampleModel(config)
     model = ExampleModel(config)
-    model.compile(run_eagerly=True)
+    model.compile(run_eagerly=config.debug.enabled)
     # Callbacks
     cb_log = tf.keras.callbacks.TensorBoard(
         config.save.path.log_dir,
