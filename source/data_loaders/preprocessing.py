@@ -20,7 +20,7 @@ def _compute_annotation_spectrum(x_ann: tf.Tensor, size_win: int, stride_win: in
 def preprocess_audio(
         x_audio: tf.Tensor,
         x_ann: Dict[str, tf.Tensor],
-        config: object
+    config: object
 ) -> Tuple[tf.Tensor, Dict[str, tf.Tensor]]:
     """_summary_
 
@@ -34,26 +34,26 @@ def preprocess_audio(
     """
     #
     x_ann['dir_play'] = _compute_change_play(
-        x_ann['dir_play'], config.size_kernel, config.sigma)
+        x_ann['dir_play'], config.annotations.size_kernel, config.annotations.sigma)
     #
     x_spec, x_ann_spec = _compute_spectrum(x_audio, x_ann,
-                                                config.nb_freqs,
-                                                config.size_win,
-                                                config.stride_win
-                                                )
+                                           config.audio.spec.nb_freqs,
+                                           config.audio.spec.size_win,
+                                           config.audio.spec.stride_win)
 
-    x_mel = tf.expand_dims(
+    x_mel = tf.stack([
         tfio.audio.melscale(
-            tf.squeeze(x_spec, axis=-1),
-            fmin=config.freq_min,
-            fmax=config.freq_max,
-            rate=config.rate_sample,
-            mels=config.nb_mel_freqs
-        ),
+            el_spec,
+            fmin=config.audio.spec.mel.freq_min,
+            fmax=config.audio.spec.mel.freq_max,
+            rate=config.audio.rate_sample,
+            mels=config.audio.spec.mel.nb_mel_freqs
+        ) for el_spec in tf.unstack(x_spec, axis=-1)],
         axis=-1
     )
     #
     return x_mel, x_ann_spec
+
 
 def _compute_spectrum(
         x_audio: tf.Tensor,
@@ -76,15 +76,16 @@ def _compute_spectrum(
     """
     #
     # Resample the annotations to the audio sample rate
-    x_spec = tf.expand_dims(
+    x_spec = tf.stack([
         tfio.audio.spectrogram(
-            tf.squeeze(x_audio, axis=-1),
+            el_audio,
             nfft=nb_freqs,
             window=size_win,
             stride=stride_win
-        ),
+        ) for el_audio in tf.unstack(x_audio, axis=-1)],
         axis=-1
     )
+    #
     x_ann_spec = dict()
     # Important:
     # Tensors inside dicts are not Eager tensors,
@@ -98,6 +99,7 @@ def _compute_spectrum(
         x_ann['dir_play'], size_win, stride_win], Tout=x_ann['dir_play'].dtype)
 
     return (x_spec, x_ann_spec)
+
 
 def _compute_change_play(x_dir_play: tf.Tensor, size_kernel: tf.Tensor, sigma: tf.Tensor) -> tf.Tensor:
     """_summary_

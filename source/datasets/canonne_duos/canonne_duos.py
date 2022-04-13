@@ -2,7 +2,7 @@
 
 from pathlib import Path
 import re
-from typing import Callable
+from typing import Callable, Union, List
 
 import librosa
 import pandas as pd
@@ -11,6 +11,7 @@ import numpy.typing as npt
 import tensorflow as tf
 import tensorflow_datasets as tfds
 import tensorflow_io as tfio
+import dataclasses
 
 
 _URL_DOWNLOAD = "https://todo-data-url"
@@ -38,10 +39,11 @@ _CITATION = """
   langid = {english}
 }
 """
+_HOMEPAGE = None
 
 _NB_DUOS = 10
 _NB_TAKES = 4
-_NB_INTERPRETS = 2
+_NB_CHANNELS = 2
 
 _RATE_AUDIO = 48000
 _SIZE_BLOCKS = _RATE_AUDIO * 2
@@ -49,25 +51,32 @@ _DTYPE_AUDIO = tf.float32
 
 _RATE_ANNOTATION = 4
 
-_LABEL_INSTRUMENTS = [
-    'piano',
-    'electric-guitar',
-    'bass-guitar',
-    'viola',
-    'cello',
-    'double-bass',
-    'voice',
-    'trumpet',
-    'saxophone',
-]
-
-_MAP_LABELS_PLAYING = {
-    "avec": 1,
-    "sans": 0,
-    "contre": -1
+_MAP_LABEL_INSTRUMENTS = {
+    'piano': 0,
+    'electric-guitar': 1,
+    'bass-guitar': 2,
+    'viola': 3,
+    'cello': 4,
+    'double-bass': 5,
+    'voice': 6,
+    'trumpet': 7,
+    'saxophone': 8,
 }
 
-_PATTERN_AUDIOFILE = r'Duo(?P<duo>\d+)_(?P<take>\d+)_(?P<interpret>\d+)_(?P<instrument>\w+).wav'
+_MAP_LABELS_PLAYING = {
+    'avec': 1,
+    'sans': 0,
+    'contre': -1
+}
+
+_PATTERN_FILE_AUDIO = r'Duo(?P<duo>\d+)_(?P<take>\d+)_(?P<channel>\d+)_(?P<instrument>(\w|\-)+).wav'
+_PATTERN_DIR_DUO = r'duo_(?P<duo>\d+)'
+_PATTERN_DIR_TAKE = r'take_(?P<take>\d+)'
+
+
+@dataclasses.dataclass
+class CanonneDuosConfig(tfds.core.BuilderConfig):
+    kind_split: Union['split', 'joined'] = 'joined'
 
 
 class CanonneDuos(tfds.core.GeneratorBasedBuilder):
@@ -80,6 +89,14 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
     RELEASE_NOTES = {
         '1.0.0': 'Initial release.',
     }
+    # pytype: disable=wrong-keyword-args
+    BUILDER_CONFIGS = [
+        CanonneDuosConfig(
+            name='split', description='Tracks from the same take and duo are separate examples', kind_split='split'),
+        CanonneDuosConfig(
+            name='joined', description='Tracks from the same take and duo are joined in a single example', kind_split='joined')
+    ]
+    # pytype: enable=wrong-keyword-args
 
     def _info(self) -> tfds.core.DatasetInfo:
         """Returns the dataset metadata."""
@@ -89,25 +106,25 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
             description=_DESCRIPTION,
             features=tfds.features.FeaturesDict({
                 # These are the features of your dataset like images, labels ...
-                'audio': tfds.features.Audio(shape=(_SIZE_BLOCKS, 1), file_format='wav', sample_rate=_RATE_AUDIO, dtype=tf.float32),
+                'audio': tfds.features.Audio(shape=(_SIZE_BLOCKS, _NB_CHANNELS), file_format='wav', sample_rate=_RATE_AUDIO, dtype=tf.float32),
                 'annotations': {
-                    'x_play': tfds.features.Tensor(shape=(_SIZE_BLOCKS, 1), dtype=tf.dtypes.float32),
-                    'y_play': tfds.features.Tensor(shape=(_SIZE_BLOCKS, 1), dtype=tf.dtypes.float32),
-                    'dir_play': tfds.features.Tensor(shape=(_SIZE_BLOCKS, 1), dtype=tf.dtypes.int8),
+                    'x_play': tfds.features.Tensor(shape=(_SIZE_BLOCKS, _NB_CHANNELS), dtype=tf.dtypes.float32),
+                    'y_play': tfds.features.Tensor(shape=(_SIZE_BLOCKS, _NB_CHANNELS), dtype=tf.dtypes.float32),
+                    'dir_play': tfds.features.Tensor(shape=(_SIZE_BLOCKS, _NB_CHANNELS), dtype=tf.dtypes.int8),
                 },
                 'labels': {
-                    'idx_duo': tfds.features.ClassLabel(num_classes=_NB_DUOS),
-                    'idx_take': tfds.features.ClassLabel(num_classes=_NB_TAKES),
-                    'idx_interpret': tfds.features.ClassLabel(num_classes=_NB_INTERPRETS),
-                    'instrument': tfds.features.ClassLabel(names=_LABEL_INSTRUMENTS)
+                    'idx_duo': tfds.features.ClassLabel(num_classes=_NB_DUOS+1),
+                    'idx_take': tfds.features.ClassLabel(num_classes=_NB_TAKES+1),
+                    'idx_channel': tfds.features.Tensor(shape=(_NB_CHANNELS,), dtype=tf.dtypes.int8),
+                    'idx_instrument': tfds.features.Tensor(shape=(_NB_CHANNELS,), dtype=tf.dtypes.int8)
                 }
                 # 'label': tfds.features.ClassLabel(names=['no', 'yes']),
             }),
             # If there's a common (input, target) tuple from the
             # features, specify them here. They'll be used if
             # `as_supervised=True` in `builder.as_dataset`.
-            supervised_keys=('audio', 'label'),  # Set to `None` to disable
-            homepage='https://dataset-homepage/',
+            supervised_keys=('audio', 'labels'),  # Set to `None` to disable
+            homepage=_HOMEPAGE,
             citation=_CITATION,
         )
 
@@ -133,67 +150,144 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
     def _generate_examples(self, path_audio: Path, path_ann: Path):
         """Yields examples."""
         # TODO(canonne_duos): Yields (key, example) tuples from the dataset
-        pat_file = re.compile(_PATTERN_AUDIOFILE)
+        pat_file_audio = re.compile(_PATTERN_FILE_AUDIO)
+        pat_dir_duo = re.compile(_PATTERN_DIR_DUO)
+        pat_dir_take = re.compile(_PATTERN_DIR_TAKE)
         ann_dict = self._extract_annotations(
             path_ann / 'dt_duo_positions.csv')
-        for p in path_audio.iterdir():
-            if p.is_file():
-                m_file = pat_file.match(p.name)
-                if m_file is not None:
-                    #
-                    x_audio = tfio.audio.decode_wav(
-                        p.read_bytes(), dtype=tf.int16)
-                    # trancode to float
-                    arr_audio = librosa.util.buf_to_float(
-                        x_audio.numpy(), dtype=np.float32)
-                    x_audio = tf.convert_to_tensor(arr_audio)
-                    #  Figure out the annotations
-                    g_file = m_file.groupdict()
-                    label_instrument = g_file['instrument']
-                    # ids have to be [0, max-1]
-                    idx_duo = int(g_file['duo'])-1
-                    idx_take = int(g_file['take'])-1
-                    idx_interpret = int(g_file['interpret'])-1
-                    df_ann = ann_dict[idx_duo+1][idx_take+1]
-                    #
-                    ann_t_play = df_ann.get('time').to_numpy()
-                    ann_x_play = df_ann.get(
-                        f'x{idx_interpret+1}').to_numpy().astype(np.float32)
-                    ann_y_play = df_ann.get(
-                        f'y{idx_interpret+1}').to_numpy().astype(np.float32)
-                    ann_dir_play = df_ann.get(
-                        f'zone{idx_interpret+1}').map(_MAP_LABELS_PLAYING).to_numpy().astype(np.int8)
-                    # Resample the annotations to the audio sample rate
-                    ann_x_play = self._fit_annotations(
-                        ann_x_play, ann_t_play, x_audio)
-                    ann_y_play = self._fit_annotations(
-                        ann_y_play, ann_t_play, x_audio)
-                    ann_dir_play = self._fit_annotations(
-                        ann_dir_play, ann_t_play, x_audio)
-                    #  Split the audio into blocks of required length
-                    x_audio_split = self._split_droplast(
-                        x_audio, _SIZE_BLOCKS)
-                    ann_x_play_split = self._split_droplast(
-                        ann_x_play, _SIZE_BLOCKS)
-                    ann_y_play_split = self._split_droplast(
-                        ann_y_play, _SIZE_BLOCKS)
-                    ann_dir_play_split = self._split_droplast(
-                        ann_dir_play, _SIZE_BLOCKS)
-                    for i in range(x_audio_split.shape[0]):
-                        yield f'{p.name}_{i}', {
-                            'audio': np.expand_dims(x_audio_split[i], axis=-1),
+        for path_dir_duo in path_audio.iterdir():
+            m_dir_duo = pat_dir_duo.match(path_dir_duo.name)
+            if m_dir_duo is not None:
+                g_dir_duo = m_dir_duo.groupdict()
+                idx_dir_duo = int(g_dir_duo['duo'])
+                for path_dir_take in path_dir_duo.iterdir():
+                    m_dir_take = pat_dir_take.match(path_dir_take.name)
+                    if m_dir_take is not None:
+                        g_dir_take = m_dir_take.groupdict()
+                        idx_dir_take = int(g_dir_take['take'])
+                        list_channel_examples = [None] * _NB_CHANNELS
+                        for path_file_audio in path_dir_take.iterdir():
+                            if path_file_audio.is_file():
+                                print('', flush=True)
+                                print(path_file_audio.name, flush=False)
+                                m_file = pat_file_audio.match(
+                                    path_file_audio.name)
+                                if m_file is not None:
+                                    print('...okay', flush=True)
+                                    #  Figure out the labels and annotations
+                                    g_file = m_file.groupdict()
+                                    label_instrument = g_file['instrument']
+                                    idx_instrument = _MAP_LABEL_INSTRUMENTS[label_instrument]
+                                    # ids have to be [1, max], idx=0 is a placeholder
+                                    idx_duo = int(g_file['duo'])
+                                    idx_take = int(g_file['take'])
+                                    idx_channel = int(g_file['channel'])
+                                    df_ann = ann_dict[idx_duo][idx_take]
+                                    # some safety check
+                                    assert idx_duo == idx_dir_duo,   "Inconsistent naming/directory scheme"
+                                    assert idx_take == idx_dir_take, "Inconsistent naming/directory scheme"
+                                    #
+                                    example_whole = self._load_example_unsplit(
+                                        path_file_audio, df_ann, idx_duo, idx_take, idx_channel, idx_instrument)
+                                    #  Divide the audio into blocks of required length
+                                    list_example_split = self._split_example(
+                                        example_whole)
+                                    # add to total channels
+                                    list_channel_examples[idx_channel -
+                                                          1] = list_example_split
+                        nb_splits = len(list_channel_examples[0])
+                        # Swap splits <-> channels in list of lists' dimensions.
+                        list_channel_examples_swapped = [
+                            [[] for _b in range(_NB_CHANNELS)] for _a in range(nb_splits)]
+                        for channel, list_examples_split in enumerate(list_channel_examples):
+                            assert list_examples_split is not None, f'Example Duo {idx_duo} / Take {idx_take} -- Channel {channel+1} was not found!'
+                            for idx_split, example in enumerate(list_examples_split):
+                                list_channel_examples_swapped[idx_split][channel] = example
+                        # merge all channels in a single example of each split
+                        list_examples_merged = [{
+                            'audio': np.concatenate([example['audio'] for example in list_examples], axis=-1),
                             'annotations': {
-                                'x_play': np.expand_dims(ann_x_play_split[i], axis=-1),
-                                'y_play': np.expand_dims(ann_y_play_split[i], axis=-1),
-                                'dir_play': np.expand_dims(ann_dir_play_split[i], axis=-1),
+                                'x_play': np.concatenate([example['annotations']['x_play'] for example in list_examples], axis=-1),
+                                'y_play': np.concatenate([example['annotations']['y_play'] for example in list_examples], axis=-1),
+                                'dir_play': np.concatenate([example['annotations']['dir_play'] for example in list_examples], axis=-1),
                             },
                             'labels': {
-                                'idx_duo': idx_duo,
-                                'idx_take': idx_take,
-                                'idx_interpret': idx_interpret,
-                                'instrument': label_instrument
+                                'idx_duo': list_examples[0]['labels']['idx_duo'],
+                                'idx_take': list_examples[0]['labels']['idx_take'],
+                                'idx_channel': np.stack([example['labels']['idx_channel'] for example in list_examples], axis=-1),
+                                'idx_instrument': np.stack([example['labels']['idx_instrument'] for example in list_examples], axis=-1)
                             }
-                        }
+                        } for list_examples in list_channel_examples_swapped]
+                        for idx_split, list_example_split in enumerate(list_examples_merged):
+                            yield f'{path_dir_duo.name}_{idx_split}', list_example_split
+
+    def _split_example(self, example_whole: dict) -> List[dict]:
+        x_audio_split = self._split_droplast(
+            example_whole['audio'], _SIZE_BLOCKS)
+        ann_x_play_split = self._split_droplast(
+            example_whole['annotations']['x_play'], _SIZE_BLOCKS)
+        ann_y_play_split = self._split_droplast(
+            example_whole['annotations']['y_play'], _SIZE_BLOCKS)
+        ann_dir_play_split = self._split_droplast(
+            example_whole['annotations']['dir_play'], _SIZE_BLOCKS)
+        list_examples_split = []
+        for i in range(x_audio_split.shape[0]):
+            list_examples_split.append({
+                'audio': np.expand_dims(x_audio_split[i], axis=-1),
+                'annotations': {
+                    'x_play': np.expand_dims(ann_x_play_split[i], axis=-1),
+                    'y_play': np.expand_dims(ann_y_play_split[i], axis=-1),
+                    'dir_play': np.expand_dims(ann_dir_play_split[i], axis=-1),
+                },
+                'labels': example_whole['labels']
+            })
+        return list_examples_split
+
+    def _load_example_unsplit(self,
+                              path_file_audio: Path,
+                              df_ann: pd.DataFrame,
+                              idx_duo: int,
+                              idx_take: int,
+                              idx_channel: int,
+                              idx_instrument: int
+                              ) -> dict:
+        #  Figure out the labels and annotations
+        #
+        x_audio = tfio.audio.decode_wav(
+            path_file_audio.read_bytes(), dtype=tf.int16)
+        # trancode to float
+        arr_audio = librosa.util.buf_to_float(
+            x_audio.numpy(), dtype=np.float32)
+        x_audio = tf.convert_to_tensor(arr_audio)
+        #
+        ann_t_play = df_ann.get('time').to_numpy()
+        ann_x_play = df_ann.get(
+            f'x{idx_channel}').to_numpy().astype(np.float32)
+        ann_y_play = df_ann.get(
+            f'y{idx_channel}').to_numpy().astype(np.float32)
+        ann_dir_play = df_ann.get(
+            f'zone{idx_channel}').map(_MAP_LABELS_PLAYING).to_numpy().astype(np.int8)
+        # Resample the annotations to the audio sample rate
+        ann_x_play = self._fit_annotations(
+            ann_x_play, ann_t_play, x_audio)
+        ann_y_play = self._fit_annotations(
+            ann_y_play, ann_t_play, x_audio)
+        ann_dir_play = self._fit_annotations(
+            ann_dir_play, ann_t_play, x_audio)
+        return {
+            'audio': x_audio,
+            'annotations': {
+                'x_play': ann_x_play,
+                'y_play': ann_y_play,
+                'dir_play': ann_dir_play
+            },
+            'labels': {
+                'idx_duo': np.int8(idx_duo),
+                'idx_take': np.int8(idx_take),
+                'idx_channel': np.int8(idx_channel),
+                'idx_instrument': np.int8(idx_instrument)
+            }
+        }
 
     @ staticmethod
     def _extract_annotations(path_ann: Path) -> dict:
@@ -249,7 +343,9 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
         Returns:
             np.ndarray: _description_
         """
+        # 'resample' annotation so that it matches audio sample frequency.
         x_ann_fit = x_ann.repeat(_RATE_AUDIO // _RATE_ANNOTATION)
+        # add zeros before the first time of annotation.
         x_ann_fit = np.concatenate(
             (np.zeros(int(_RATE_AUDIO * t_ann[0]), dtype=x_ann_fit.dtype), x_ann_fit))
         x_ann_fit.resize(x_audio.shape)

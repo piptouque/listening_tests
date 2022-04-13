@@ -1,29 +1,40 @@
 {
     "exp_name": "example",
-    "audio": {
-        "rate_sample": 48000,
-        "nb_freqs": 1024,
-        "size_win": 1024,
-        "stride_win": 256,
-        "nb_mel_freqs": 64,
-        "freq_min": 20,
-        "freq_max": 20000,
-        "size_kernel": 3,
-        "sigma": 1
+    "data": {
+        "audio": {
+            "rate_sample": 48000,
+            "spec": {
+                "nb_freqs": 1024,
+                "size_win": 1024,
+                "stride_win": 256,
+                "mel": {
+                    "nb_mel_freqs": 64,
+                    "freq_min": 20,
+                    "freq_max": 20000
+                }
+            }
+        },
+        "annotations": {
+            "size_kernel": 3,
+            "sigma": 1
+        }
     },
     "model": {
-        "cnn": {
+        "conv": {
             "size_kernel": [
                 3,
                 3
-            ]
+            ],
+            "rate_dilation": 3
+        },
+        "ae": {
+            "size_latent": 1024
         }
     },
     "training": {
-        "rate_learning": 0.001,
+        "rate_learning": 0.02,
         "size_batch": 8,
-        "num_epochs": 5,
-        "num_iter_per_epoch": 60
+        "nb_epochs": 10
     },
     "dataset": {
         "name": "canonne_duos",
@@ -31,7 +42,7 @@
     },
     "save": {
         "log": {
-            "update_freq": 10
+            "update_freq": 1
         },
         "checkpoint": {
             "max_to_keep": 5,
