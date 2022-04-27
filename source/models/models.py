@@ -1,6 +1,31 @@
 from typing import Tuple
 
 import tensorflow as tf
+from abc import ABCMeta, abstractmethod, abstractproperty
+
+
+class AutoEncoder(tf.keras.Model, metaclass=ABCMeta):
+    """_summary_
+    """
+    @abstractproperty
+    def encoder(self) -> tf.keras.Model:
+        pass
+
+    @abstractproperty
+    def decoder(self) -> tf.keras.Model:
+        pass
+
+    @abstractproperty
+    def flat(self) -> tf.keras.Model:
+        pass
+
+    @abstractproperty
+    def unflat(self) -> tf.keras.Model:
+        pass
+
+    @abstractmethod
+    def get_reconstruction_loss_fn(self) -> tf.keras.losses.Loss:
+        pass
 
 
 class NonLinearRegression(tf.keras.Model):
@@ -123,11 +148,11 @@ class DeconvolutionalDecoder(tf.keras.Model):
                 self._shape_output[-3], self._shape_output[-2])
         ])
 
-    def call(self, z: tf.Tensor) -> tf.Tensor:
-        return self._layers(z)
+    def call(self, h: tf.Tensor) -> tf.Tensor:
+        return self._layers(h)
 
 
-class ConvolutionalAutoEncoder(tf.keras.Model):
+class ConvolutionalAutoEncoder(AutoEncoder):
     """_summary_
     """
 
@@ -153,24 +178,82 @@ class ConvolutionalAutoEncoder(tf.keras.Model):
                 tf.keras.layers.Dropout(0.2)
             ])
 
-        self._bottleneck_in = tf.keras.Sequential([
+        self._flat = tf.keras.Sequential([
             tf.keras.layers.Flatten(),
-            tf.keras.layers.Dense(
-                self._config.ae.size_latent, activation='sigmoid'),
-            tf.keras.layers.Dropout(0.1)
         ])
-        self._bottleneck_out = tf.keras.Sequential([
-            tf.keras.layers.Dense(tf.math.reduce_prod(
-                self._shape_decoder_input[1:]), activation='sigmoid'),
+        self._unflat = tf.keras.Sequential([
             tf.keras.layers.Reshape(self._shape_decoder_input[1:])
         ])
         self._decoder = DeconvolutionalDecoder(self._shape_data, self._config)
 
+    @property
+    def encoder(self) -> tf.keras.Model:
+        return self._encoder
+
+    @property
+    def decoder(self) -> tf.keras.Model:
+        return self._decoder
+
+    @property
+    def flat(self) -> tf.keras.Model:
+        return self._flat
+
+    @property
+    def unflat(self) -> tf.keras.Model:
+        return self._unflat
+
+    def get_reconstruction_loss_fn(self) -> tf.keras.losses.Loss:
+        return tf.keras.losses.MeanSquaredError()
+
     def call(self, x: tf.Tensor) -> tf.Tensor:
-        z = self._encoder(x)
+        h = self._encoder(x)
         ##
-        h = self._bottleneck_in(z)
-        h = self._bottleneck_out(h)
+        # h = self._l_flatten(z)
+        # h = self._l_unflatten(h)
         ##
         y = self._decoder(h)
         return y
+
+
+class ListenerModule(tf.keras.Model):
+    """_summary_
+
+    """
+
+    def __init__(self, autoencoder: AutoEncoder, annotation_generator: tf.keras.Model, beta: float):
+        self._autoencoder = autoencoder
+        self._annotation_generator = annotation_generator
+        self._beta = tf.clip_by_value(beta, 0.0, 1.0)
+
+        self._fn_annotation_loss = tf.keras.losses.MeanSquaredError()
+        self._fn_encoding_loss = self._autoencoder.get_reconstruction_loss_fn()
+
+    def call(self, x: tf.Tensor, training=None) -> Tuple[tf.Tensor, tf.Tensor]:
+        """_summary_
+
+        Args:
+            x (tf.Tensor): Mel-spectrograms.
+            ann (tf.Tensor): 1-D value tensors.
+            training (_type_, optional): _description_. Defaults to None.
+
+        Returns:
+            Tuple[tf.Tensor, tf.Tensor]: _description_
+        """
+        h_l = self._autoencoder.encoder(x)
+        z_l = self._autoencoder.flat(h_l)
+        a_hat = self._annotation_generator(z_l)
+        # add losses of
+        if training:
+            x_hat = self._autoencoder.decode(h_l)
+            self.add_loss(
+                (1 - self._beta) * self._fn_encoding_loss(x, x_hat)
+            )
+            # self.add_loss( self._beta * self._fn_annotation_loss(a, a_hat))
+        return z_l, a_hat
+
+    def get_loss_fn(self,  out: Tuple[tf.Tensor, tf.Tensor], truth: Tuple[tf.Tensor, tf.Tensor]) -> tf.Tensor:
+        _, a_hat = out
+        a = truth
+        h_l = self._autoencoder.unflat(outs)
+        loss_code = (1 - self._beta) * self._fn_encoding_loss(x, x_hat)
+        loss_ann = self._beta * self._fn_annotation_loss()

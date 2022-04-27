@@ -36,8 +36,9 @@ if __name__ == '__main__':
         # inputs['spectra_mel'] = x_mel
         # inputs['annotations_spec'] = x_ann_spec
         x = x_mel
+        ann = inputs['annotations']
         # y = x_ann_spec['dir_play']
-        return x, x
+        return x, ann
     ds_train = ds_train.map(_preprocess).batch(
         config.training.size_batch).prefetch(tf.data.AUTOTUNE)
     ds_val = ds_val.map(_preprocess).batch(config.training.size_batch)
