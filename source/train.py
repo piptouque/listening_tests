@@ -12,6 +12,7 @@ from utils.utils import get_args
 import datasets.canonne_duos.canonne_duos
 
 
+
 if __name__ == '__main__':
     # capture the config path from the run arguments
     # then process the json configuration file
@@ -22,11 +23,28 @@ if __name__ == '__main__':
     create_dirs([config.save.path.log_dir,
                 config.save.path.checkpoint_dir])
 
+    import manage_gpus as gpl
+    try:
+        id_gpu_locked = gpl.get_gpu_lock(soft=True)
+    except gpl.NoGpuManager:
+        print("no gpu manager available - will use all available GPUs", file=sys.stderr)
+    except gpl.NoGpuAvailable:
+        # there is no GPU available for locking, continue with CPU
+        # comp_device = "/cpu:0" 
+        # os.environ["CUDA_VISIBLE_DEVICES"]=""
+        # nope.
+        print("No gpu available!")
+        exit(1)
+    
     # create tensorflow session
     # data = DataGenerator(config)
     # ds_train, ds_val = ExampleDatasetGenerator(config)()
-    ds_train, ds_val = tfds.load('canonne_duos', split=[
-                                 'train[90%:]', 'train[:10%]'])
+    ds_train, ds_val = tfds.load(
+        'canonne_duos',
+        split=['train[90%:]', 'train[:10%]'],
+        data_dir=config.dataset.path,
+        download=False
+        )
 
     def _preprocess(inputs: dict) -> dict:
         x_mel, x_ann_spec = preprocess_audio(

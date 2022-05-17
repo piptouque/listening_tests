@@ -14,6 +14,11 @@ def get_args():
         metavar='S',
         required=True,
         help='Checkpoint and summary saving directory path')
+    argparser.add_argument(
+        '-d', '--dataset',
+        metavar='D',
+        required=True,
+        help='Dataset dir path')
     args = argparser.parse_args()
     return args
 

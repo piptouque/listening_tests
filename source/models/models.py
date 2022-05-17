@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Tuple, Union
 
 import tensorflow as tf
 from abc import ABCMeta, abstractmethod, abstractproperty
@@ -26,6 +26,178 @@ class AutoEncoder(tf.keras.Model, metaclass=ABCMeta):
     @abstractmethod
     def get_reconstruction_loss_fn(self) -> tf.keras.losses.Loss:
         pass
+
+class MaskConstraint(tf.keras.constraints.Constraint):
+    def __init__(self, mask: tf.Tensor, axis: Union[int, Tuple[int]]):
+        tf.Assert(tf.math.equal(tf.rank(mask), tf.rank(axis)))
+        self._mask = tf.constant(tf.clip_by_value(tf.math.round(mask), 0, 1))
+        self._axis = axis
+
+    def __call__(self, w: tf.Tensor) -> tf.Tensor:
+        s = tf.ones(tf.rank(w))
+        s[axis] = tf.shape(w)
+        mask = tf.reshape(self._mask,  s)
+        tf.Assert(tf.math.equal(tf.shape(w)[axis], tf.shape(self._mask)[axis]))
+        return w * self._mask
+
+
+
+class VectorQuantiser(tf.keras.Layer):
+    """
+    Vector Quantification part of a VQ-VAE,
+    as described in the original paper:
+        [1] A. van den Oord, O. Vinyals, and K. Kavukcuoglu, 'Neural discrete representation learning’,
+            in Advances in neural information processing systems, 2017, vol. 30.
+    And implemented based on:
+        https://github.com/hiwonjoon/tf-vqvae/blob/master/model.py
+    """
+    def __init__(dim_embedding:int, nb_embeddings: int, beta: float):
+        self._vecs_embedding = tf.random.uniform(shape=(dim_embedding, nb_embeddings))
+
+    def call(self, z_e: tf.Tensor) -> tf.Tensor:
+        tf.Assert(tf.math.equal(tf.shape(z_e)[-1], tf.shape(self._vecs_embedding)[-1]))
+        h = tf.expand_dims(z_e, axis=-2)
+        h = tf.norm(h - self._vecs_embedding, axis=-1)
+        ids = tf.argmin(h, axis=-1)
+        z_q = tf.gather(self._vecs_embedding, ids)
+        # compute and add losses
+        l_commit = tf.reduce_mean(tf.norm(tf.stop_gradient(z_e) - z_q, axis=-1)**2, axis=[0,1,2])
+        l_codebook = tf.reduce_mean(tf.norm(z_e - tf.stop_gradient(z_q), axis=-1)**2, axis=[0,1,2])
+        self.add_loss(l_codebook + l_commit * beta)
+        return {
+            'quantised': z_q,
+            'vecs': self._vecs_embedding,
+            'ids': ids
+        }
+
+class MuLawQuantiser(tf.keras.Layer):
+    """
+    as described in:
+        [2] A. van den Oord et al., 'WaveNet: A Generative Model for Raw Audio',
+            arXiv:1609.03499 [cs.SD], 2016.
+    """
+    def __init__(self, mu: int):
+        self._mu = mu
+
+
+
+
+class GatedActivationUnit(tf.keras.Model):
+    def __init__(
+        nb_filters_dilation: int,
+        size_kernel: int,
+        rate_dilation: int,
+        causal=False: bool,
+        use_bias=True: bool
+        ):
+        self._conv_filter = tf.keras.Conv1D(
+                nb_filters_dilation,
+                kernel_size=size_kernel,
+                dilation_rate=rate_dilation,
+                padding='causal' if causal else 'same',
+                use_bias=use_bias,
+                activation='tanh'
+            )
+        self._conv_gate = tf.keras.Conv1D(
+                nb_filters_dilation,
+                kernel_size=size_kernel,
+                dilation_rate=rate_dilation,
+                padding='causal' if causal else 'same',
+                use_bias=use_bias,
+                activation='sigmoid'
+            )
+    def call(x: tf.Tensor) -> tf.Tensor:
+        x_filter = self._conv_filter(x)
+        x_gate = self._conv_gate(x)
+        return x_filter * x_gate
+    
+
+class WaveNet(tf.keras.Model):
+    """
+    Modified version of WaveNet
+    Based on: https://github.com/WindQAQ/tensorflow-wavenet/
+    """
+    class ResidualBlock(tf.keras.Model):
+        def __init__(
+            nb_filters_residual: int,
+            nb_filters_dilation: int,
+            nb_filters_skip: int,
+            size_kernel: int,
+            rate_dilation: int,
+            causal: bool,
+            use_bias: bool
+            ):
+            self._gau = GatedActivationUnit(
+                   nb_filters_dilation,
+                   size_kernel,
+                   rate_dilation,
+                   causal=causal,
+                   use_bias=use_bias
+            )
+            self._conv_skip = tf.keras.Conv1D(
+                nb_filters_skip,
+                kernel_size=1,
+                padding='same',
+                use_bias=use_bias
+            )
+            self._conv_residual = tf.keras.Conv1D(
+                nb_filters_skip,
+                kernel_size=1,
+                padding='same',
+                use_bias=use_bias
+            )
+        def call(x: tf.Tensor) -> tf.Tensor:
+            y_gau = self._gau(x)
+            y_skip = self._conv_skip(y_gau)
+            y_residual = self._conv_residual(y_gau)
+            return y_residual + x, y_skip
+        
+    def __init__(self,
+            size_output: int,
+            nb_blocks_residual: int,
+            nb_filters_residual: int,
+            nb_filters_dilation: int,
+            nb_filters_skip: int,
+            size_kernel: int,
+            rate_dilation_init: int,
+            causal=False: bool,
+            use_bias=False: bool
+            ):
+        self._conv_init = tf.keras.Conv1D(
+            nb_filters_residual,
+            kernel_size=size_kernel, # TODO?: different kernel size at first?
+            padding='same'
+        )
+        self._blocks_res = [
+            ResidualBlock(
+                nb_filters_residual,
+                nb_filters_dilation,
+                nb_filters_skip,
+                size_kernel,
+                rate_dilation_init ** idx_block,
+                causal=causal,
+                use_bias=use_bias
+            )
+            for idx_block in range(nb_blocks_residual)]
+        self._block_end = tf.keras.Sequential(
+            tf.keras.Add(),
+            tf.keras.activations.ReLU(),
+            tf.keras.Conv1D(
+                nb_filters_skip,
+                kernel_size=1,
+                padding='same',
+                use_bias=True
+            ),
+            tf.keras.activations.ReLU(),
+            tf.keras.Conv1D(
+                size_output,
+                kernel_size=1,
+                padding='same',
+                use_bias=True
+            ),
+            tf.keras.activations.ReLU(),
+            tf.keras
+        )
 
 
 class NonLinearRegression(tf.keras.Model):

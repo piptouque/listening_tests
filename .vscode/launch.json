@@ -5,7 +5,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Tensorflow: Train Example",
+            "name": "Guan: Train Example",
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/source/train.py",
@@ -15,7 +15,9 @@
                 "--config",
                 "${workspaceFolder}/source/configs/example_config.json",
                 "--save_root",
-                "${workspaceFolder}/saved/"
+                "/data/anasynth_nonbp/thiel/saved_models/listening_tests/",
+                "--dataset",
+                "/data/anasynth_nonbp/thiel/tensorflow_datasets/"
             ]
         }
     ]

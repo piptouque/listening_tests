@@ -7,7 +7,7 @@ from typing import Callable, Union, List
 import librosa
 import pandas as pd
 import numpy as np
-import numpy.typing as npt
+# import numpy.typing as npt
 import tensorflow as tf
 import tensorflow_datasets as tfds
 import tensorflow_io as tfio
@@ -168,12 +168,12 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
                         list_channel_examples = [None] * _NB_CHANNELS
                         for path_file_audio in path_dir_take.iterdir():
                             if path_file_audio.is_file():
-                                print('', flush=True)
-                                print(path_file_audio.name, flush=False)
+                                # print('', flush=True)
+                                # print(path_file_audio.name, flush=False)
                                 m_file = pat_file_audio.match(
                                     path_file_audio.name)
                                 if m_file is not None:
-                                    print('...okay', flush=True)
+                                    # print('...okay', flush=True)
                                     #  Figure out the labels and annotations
                                     g_file = m_file.groupdict()
                                     label_instrument = g_file['instrument']
@@ -332,7 +332,7 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
         return x_split
 
     @ staticmethod
-    def _fit_annotations(x_ann: np.ndarray, t_ann: npt.NDArray[float], x_audio: npt.NDArray[np.float32]) -> np.ndarray:
+    def _fit_annotations(x_ann: np.ndarray, t_ann: np.ndarray, x_audio: np.ndarray) -> np.ndarray:
         """_summary_
 
         Args:

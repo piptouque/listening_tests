@@ -1,5 +1,6 @@
 import os
 import json
+import pathlib
 
 from types import SimpleNamespace
 
@@ -24,4 +25,5 @@ def process_config(args):
         args.save_root, config.exp_name, "log/")
     config.save.path.checkpoint_dir = os.path.join(
         args.save_root, config.exp_name, "checkpoint/")
+    config.dataset.path = pathlib.Path(args.dataset)
     return config
