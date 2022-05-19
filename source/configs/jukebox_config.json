@@ -20,15 +20,23 @@
         }
     },
     "model": {
-        "conv": {
-            "size_kernel": [
-                3,
-                3
-            ],
-            "rate_dilation": 3
-        },
-        "ae": {
-            "size_latent": 1024
+        "jukebox": {
+            "nb_levels": 3,
+            "nb_filters": 32,
+            "nb_blocks_sample": [3, 5, 7],
+            "size_kernel_sample": 4,
+            "stride_sample": 2,
+            "nb_blocks_res": [8, 4, 4],
+            "size_kernel_res": 3,
+            "rate_dilation_res": 3,
+            "size_codebook": 256,
+            "beta_codebook": 0.99
+        }
+    },
+    "loss": {
+        "power_spectrum": {
+            "frame_length": 1024,
+            "step_frame": 512
         }
     },
     "training": {
