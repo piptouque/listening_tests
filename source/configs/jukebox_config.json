@@ -22,7 +22,7 @@
     "model": {
         "jukebox": {
             "nb_levels": 3,
-            "nb_filters": 32,
+            "nb_filters": 8,
             "nb_blocks_sample": [3, 5, 7],
             "size_kernel_sample": 4,
             "stride_sample": 2,

@@ -7,9 +7,11 @@ class PowerSpectrumLoss(tf.keras.losses.Loss):
         step_frame: int,
         fft_length: int = None,
         window_fn=tf.signal.hann_window,
-        pad_end=False
+        pad_end=False,
+        reduction=tf.keras.losses.Reduction.AUTO,
+        name=None
     ) -> None:
-        super(PowerSpectrumLoss, self).__init__()
+        super(PowerSpectrumLoss, self).__init__(reduction=reduction, name=name)
         def my_stft(x: tf.Tensor) -> tf.Tensor: 
             return tf.signal.stft(
                 x,
@@ -21,7 +23,7 @@ class PowerSpectrumLoss(tf.keras.losses.Loss):
             )
         self._fn_stft = my_stft
         
-    def __call__(self, y_pred: tf.Tensor, y_truth: tf.Tensor) -> tf.Tensor:
+    def __call__(self, y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
         return tf.keras.losses.mean_squared_error(
-            self._fn_stft(y_pred), self._fn_stft(y_truth)
+            self._fn_stft(y_pred), self._fn_stft(y_true)
         )

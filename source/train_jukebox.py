@@ -4,7 +4,7 @@ import tensorflow_datasets as tfds
 
 from data_loaders.example_data_loader import ExampleDatasetGenerator
 from data_loaders.preprocessing import preprocess_audio
-from models.models import ConvolutionalAutoEncoder, GstModel, JukeboxModel
+from models.models import JukeboxModel
 from utils.dirs import create_dirs
 from utils.config import process_config
 from utils.utils import get_args
@@ -38,9 +38,6 @@ if __name__ == '__main__':
         print("No gpu available!")
         exit(1)
     
-    # create tensorflow session
-    # data = DataGenerator(config)
-    # ds_train, ds_val = ExampleDatasetGenerator(config)()
     ds_train, ds_val = tfds.load(
         'canonne_duos',
         split=['train[90%:]', 'train[:10%]'],
@@ -66,9 +63,7 @@ if __name__ == '__main__':
     shape_input = ds_train.element_spec[0].shape
 
     # create an instance of the model you want
-    model = tf.keras.Sequential()
-    # model.add(ConvolutionalAutoEncoder(config.model.ae, shape_input))
-    model.add(JukeboxModel(shape_input=shape_input, **vars(config.model.jukebox)))
+    model = JukeboxModel(shape_input=shape_input, **vars(config.model.jukebox))
     model.compile(
         loss=PowerSpectrumLoss(**vars(config.loss.power_spectrum)),
         run_eagerly=config.debug.enabled
@@ -100,4 +95,3 @@ if __name__ == '__main__':
     )
     model.build(shape_input)
     model.summary(expand_nested=True)
-    #
