@@ -1,5 +1,5 @@
 {
-    "exp_name": "Jukebox",
+    "exp_name": "Something",
     "data": {
         "audio": {
             "time": {
@@ -10,7 +10,7 @@
             "freq": {
                 "freq_min": 80,
                 "freq_max": 10000,
-                "nb_mel_freqs": 64,
+                "nb_freqs_mel": 64,
                 "nb_mfcc": 8
             }
         },
@@ -34,10 +34,6 @@
         }
     },
     "loss": {
-        "power_spectrum": {
-            "frame_length": 1024,
-            "step_frame": 512
-        }
     },
     "training": {
         "rate_learning": 0.02,

@@ -5,15 +5,15 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Example: Train",
+            "name": "Something (descriptors): Train",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/source/train.py",
+            "program": "${workspaceFolder}/source/train_something_descriptor.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
                 "--config",
-                "${workspaceFolder}/source/configs/example_config.json",
+                "${workspaceFolder}/source/configs/something_descriptor_config.json",
                 "--save_root",
                 "/data/anasynth_nonbp/thiel/saved_models/listening_tests/",
                 "--dataset",

@@ -1,13 +1,14 @@
 import os
+import sys
 import tensorflow as tf
 import tensorflow_datasets as tfds
 
 from data_loaders.example_data_loader import ExampleDatasetGenerator
-from data_loaders.preprocessing import preprocess_audio
-from models.models import GstModel
+from models.models import JukeboxModel
 from utils.dirs import create_dirs
 from utils.config import process_config
 from utils.utils import get_args
+from utils.preprocessing import preprocess_audio_features
 
 import datasets.canonne_duos.canonne_duos
 
@@ -25,20 +26,18 @@ if __name__ == '__main__':
 
     import manage_gpus as gpl
     try:
-        id_gpu_locked = gpl.get_gpu_lock(soft=True)
+        id_gpu_locked = gpl.get_gpu_lock(soft=False)
+        # os.environ["CUDA_VISIBLE_DEVICES"]=""
     except gpl.NoGpuManager:
         print("no gpu manager available - will use all available GPUs", file=sys.stderr)
     except gpl.NoGpuAvailable:
         # there is no GPU available for locking, continue with CPU
-        # comp_device = "/cpu:0" 
-        # os.environ["CUDA_VISIBLE_DEVICES"]=""
+        comp_device = "/cpu:0" 
+        os.environ["CUDA_VISIBLE_DEVICES"]=""
         # nope.
-        print("No gpu available!")
-        exit(1)
+        # print("No gpu available!")
+        # exit(1)
     
-    # create tensorflow session
-    # data = DataGenerator(config)
-    # ds_train, ds_val = ExampleDatasetGenerator(config)()
     ds_train, ds_val = tfds.load(
         'canonne_duos',
         split=['train[90%:]', 'train[:10%]'],
@@ -47,29 +46,26 @@ if __name__ == '__main__':
         )
 
     def _preprocess(inputs: dict) -> dict:
-        x_mel, x_ann_spec = preprocess_audio(
-            inputs['audio'], inputs['annotations'],
-            config.data
-        )
-        # inputs['spectra_mel'] = x_mel
-        # inputs['annotations_spec'] = x_ann_spec
-        x = x_mel
-        ann = inputs['annotations']
-        # y = x_ann_spec['dir_play']
-        return x, ann
+        x_audio = inputs['audio']
+        x_features = preprocess_audio_features(x_audio, config.data)
+        x = tf.expand_dims(x_features[..., 0], axis=-1)
+        y = x
+        print(x.shape, y.shape)
+        return x, y
     ds_train = ds_train.map(_preprocess).batch(
         config.training.size_batch).prefetch(tf.data.AUTOTUNE)
     ds_val = ds_val.map(_preprocess).batch(config.training.size_batch)
 
     # Infer processed input shape
     shape_input = ds_train.element_spec[0].shape
+    # Since the preprocessing makes us lose this info,
+    # here's an hacky way to do it.
+    example = ds_train.get_single_element()
 
     # create an instance of the model you want
-    model = tf.keras.Sequential()
-    # model.add(ConvolutionalAutoEncoder(config.model.ae, shape_input))
-    model.add(GstModel(config.model.gst, shape_input))
+    model = JukeboxModel(shape_input=shape_input, **vars(config.model.jukebox))
     model.compile(
-        loss=tf.keras.losses.MeanSquaredError(),
+        loss=tf.keras.losses.MSE(),
         run_eagerly=config.debug.enabled
     )
     #
@@ -87,10 +83,6 @@ if __name__ == '__main__':
         mode='min'
     )
     #
-    model.build(shape_input)
-    model.summary(expand_nested=True)
-    #
-    """
     model.fit(
         x=ds_train,
         validation_data=ds_val,
@@ -101,4 +93,5 @@ if __name__ == '__main__':
         epochs=config.training.nb_epochs,
         steps_per_epoch=None
     )
-    """
+    model.build(shape_input)
+    model.summary(expand_nested=True)

@@ -4,42 +4,6 @@ import tensorflow as tf
 from abc import ABCMeta, abstractmethod, abstractproperty
 
 
-class AutoEncoder(tf.keras.Model, metaclass=ABCMeta):
-    """_summary_
-    """
-    @abstractproperty
-    def encoder(self) -> tf.keras.Model:
-        pass
-
-    @abstractproperty
-    def decoder(self) -> tf.keras.Model:
-        pass
-
-    @abstractproperty
-    def flat(self) -> tf.keras.Model:
-        pass
-
-    @abstractproperty
-    def unflat(self) -> tf.keras.Model:
-        pass
-
-    @abstractmethod
-    def get_reconstruction_loss_fn(self) -> tf.keras.losses.Loss:
-        pass
-
-class MaskConstraint(tf.keras.constraints.Constraint):
-    def __init__(self, mask: tf.Tensor, axis: Union[int, Tuple[int]]) -> None:
-        tf.debugging.assert_equal(tf.rank(mask), tf.rank(axis))
-        self._mask = tf.constant(tf.clip_by_value(tf.math.round(mask), 0, 1))
-        self._axis = axis
-
-    def call(self, w: tf.Tensor) -> tf.Tensor:
-        s = tf.ones(tf.rank(w))
-        s[self._axis] = tf.shape(w)
-        mask = tf.reshape(self._mask,  s)
-        tf.debugging.assert_equal(tf.shape(w)[self._axis], tf.shape(mask)[self._axis])
-        return w * self._mask
-
 class GatedActivationUnit(tf.keras.layers.Layer):
     def __init__(self,
         nb_filters_dilation: int,
@@ -216,6 +180,7 @@ class WaveNet(tf.keras.Model):
         )
 
 class JukeboxModel(tf.keras.Model):
+    """"""
     class ResidualSubBlock(tf.keras.Model):
         def __init__(self,
                 nb_filters: int,
@@ -240,7 +205,6 @@ class JukeboxModel(tf.keras.Model):
         def call(self, x: tf.Tensor) -> tf.Tensor:
             h = self._convs(x) + x
             return h
-
 
     class DownsamplingBlock(tf.keras.Model):
         def __init__(self,
