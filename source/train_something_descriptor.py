@@ -5,10 +5,10 @@ import tensorflow_datasets as tfds
 
 from data_loaders.example_data_loader import ExampleDatasetGenerator
 from models.models import JukeboxModel
+from models.preprocessing import AudioFeatureExtractor
 from utils.dirs import create_dirs
 from utils.config import process_config
 from utils.utils import get_args
-from utils.preprocessing import preprocess_audio_features
 
 import datasets.canonne_duos.canonne_duos
 
@@ -43,14 +43,28 @@ if __name__ == '__main__':
         split=['train[90%:]', 'train[:10%]'],
         data_dir=config.dataset.path,
         download=False
-        )
+    )
+    
+    shape_preprocessed = ds_train.element_spec['audio'].shape
+
+    feature_extractor = AudioFeatureExtractor(
+        config.data.audio.time.rate_sample,
+        config.data.audio.time.size_win,
+        config.data.audio.time.stride_win,
+        config.data.audio.freq.freq_min,
+        config.data.audio.freq.freq_max,
+        config.data.audio.freq.nb_mfcc
+    )
+    feature_extractor.build(shape_preprocessed)
 
     def _preprocess(inputs: dict) -> dict:
         x_audio = inputs['audio']
-        x_features = preprocess_audio_features(x_audio, config.data)
-        x = tf.expand_dims(x_features[..., 0], axis=-1)
+        x_features = feature_extractor(x_audio)
+        # keep only left channel for now,
+        # And replace channel by the features as last dim.
+        x = x_features[..., 0]
         y = x
-        print(x.shape, y.shape)
+        # print(x.shape, y.shape)
         return x, y
     ds_train = ds_train.map(_preprocess).batch(
         config.training.size_batch).prefetch(tf.data.AUTOTUNE)
@@ -58,14 +72,11 @@ if __name__ == '__main__':
 
     # Infer processed input shape
     shape_input = ds_train.element_spec[0].shape
-    # Since the preprocessing makes us lose this info,
-    # here's an hacky way to do it.
-    example = ds_train.get_single_element()
 
     # create an instance of the model you want
     model = JukeboxModel(shape_input=shape_input, **vars(config.model.jukebox))
     model.compile(
-        loss=tf.keras.losses.MSE(),
+        loss=tf.keras.losses.MeanSquaredError(),
         run_eagerly=config.debug.enabled
     )
     #

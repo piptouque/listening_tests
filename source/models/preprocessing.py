@@ -43,24 +43,71 @@ def preprocess_audio(
     #
     return x_mel, x_ann_spec
 
-def preprocess_audio_features(x_audio: tf.Tensor, config: object) -> tf.Tensor:
-    """
-    """
-    x_features = _compute_audio_features(x_audio,
-        rate_sample=config.audio.time.rate_sample,
-        size_win=config.audio.time.size_win,
-        stride_win=config.audio.time.stride_win,
-        freq_min=config.audio.freq.freq_min,
-        freq_max=config.audio.freq.freq_max,
-        nb_mfcc=config.audio.freq.nb_mfcc
-    )
+class AudioFeatureExtractor(tf.keras.layers.Layer):
+    """Simple audio feature extractor"""
     _NAMES_FEATURES_USED = [
         'freq_0', 'prob_freq',
         'root_mean_square',
         'spectral_flatness', 'spectral_centroid'
     ]
-    x_features_used = [x_features[name_feature_used] for name_feature_used in _NAMES_FEATURES_USED]
-    return tf.stack(x_features_used, axis=0) 
+    def __init__(self,
+        rate_sample: int,
+        size_win: int,
+        stride_win: int,
+        freq_min: float,
+        freq_max: float,
+        nb_mfcc: int
+    ) -> None:
+        super(AudioFeatureExtractor, self).__init__() 
+
+        self._rate_sample = rate_sample
+        self._size_win = size_win
+        self._stride_win = stride_win
+        self._freq_min = freq_min
+        self._freq_max = freq_max
+        self._nb_mfcc = nb_mfcc
+        #
+        self._nb_freqs = self._size_win
+    
+    def call(self,
+        x_audio: tf.Tensor
+    ) -> tf.Tensor:
+        """Compute feature tensor"""
+        x_features = _compute_audio_features(
+            x_audio,
+            rate_sample=self._rate_sample,
+            size_win=self._size_win,
+            stride_win=self._stride_win,
+            freq_min=self._freq_min,
+            freq_max=self._freq_max,
+            nb_freqs=self._nb_freqs,
+            nb_mfcc=self._nb_mfcc
+        )
+        x_features_used = [x_features[name_feature_used] for name_feature_used in self._NAMES_FEATURES_USED]
+        # All features should have the same shape
+        # That way, they can be stacked in a new tensor.
+        shapes = [feat.shape for feat in x_features_used]
+        if all(s.is_fully_defined() for s in shapes):
+            tf.debugging.Assert(all(s == shapes[0] for s in shapes), [shapes[0]])
+        x_features_used = tf.stack(x_features_used, axis=0) 
+        output_shape = self._compute_output_shape(x_audio.shape)
+        x_features_used = tf.ensure_shape(x_features_used, shape=output_shape)
+        return x_features_used
+
+    def _compute_output_shape(self, input_shape: tf.TensorShape) -> tf.TensorShape:
+        """Compute here so we don't loose the shape info due to preprocessing. 
+        """
+        tf.assert_greater(tf.size(input_shape), 1)
+        output_shape = input_shape.as_list()
+        # insert the feature dimension 
+        # [..., time_1, channel] -> [..., feature, time_1, channel]
+        output_shape.insert(-2, len(self._NAMES_FEATURES_USED))
+        # and change (downsample) time dimension.
+        # [..., feature, time_1, channel] -> [..., feature, time_2, channel]
+        output_shape[-2] = output_shape[-2] // self._stride_win + 1
+        output_shape = tf.TensorShape(output_shape)
+        return output_shape
+
 
 def _compute_audio_features(
     x_audio: tf.Tensor,
@@ -69,17 +116,17 @@ def _compute_audio_features(
     stride_win: int,
     freq_min: float,
     freq_max: float,
+    nb_freqs: int,
     nb_mfcc: int
 ) -> Dict[str, tf.Tensor]:
-    _NAMES_FEATURE = [
+    _NAMES_FEATURES = [
         'mfcc', 'freq_0', 'prob_freq',
         'root_mean_square', 'zero_crossing_rate',
         'spectral_flatness', 'spectral_centroid'
     ]
-    # our pre-processing assumes channel-first (after batch)
-    # from [batch, ..., channel] to [batch, channel, ...]
-    perm = [] # TODO
-    perm_inv = [] # TODO
+    # our pre-processing assumes channel-first (no batch)
+    # forward permutation: from [..., time, channel] to [channel, ..., time]
+    perm = tf.roll(tf.range(tf.rank(x_audio)), shift=1, axis=0)
     x_features = tf.numpy_function(
         _compute_audio_features_numpy,
         [
@@ -89,12 +136,16 @@ def _compute_audio_features(
             stride_win,
             freq_min,
             freq_max,
+            nb_freqs,
             nb_mfcc
         ],
-        Tout=[x_audio.dtype] * len(_NAMES_FEATURE)
+        Tout=[x_audio.dtype] * len(_NAMES_FEATURES)
     )
-    x_features = [tf.transpose(x_feature, perm=perm_inv) for x_feature in x_features]
-    return dict(zip(_NAMES_FEATURE, x_features))
+    # inverse permutation: from [channel, ..., feature, time] to [..., feature, time, channel]
+    for idx, feat in enumerate(x_features):
+        perm_inv = tf.roll(tf.range(tf.rank(feat)), shift=-1, axis=0)
+        x_features[idx] = tf.transpose(feat, perm=perm_inv)
+    return dict(zip(_NAMES_FEATURES, x_features))
 
 
 def _compute_audio_features_numpy(
@@ -104,10 +155,10 @@ def _compute_audio_features_numpy(
     stride_win: int,
     freq_min: float,
     freq_max: float,
+    nb_freqs: int,
     nb_mfcc: int
 ) -> List[np.ndarray]:
 
-    nb_freqs = size_win
     x_spec = librosa.stft(
             y=x_audio,
             n_fft=nb_freqs,
@@ -135,25 +186,33 @@ def _compute_audio_features_numpy(
     x_freq_0 = x_freq_0.astype(x_audio.dtype)
     x_prob_freq = x_prob_freq.astype(x_audio.dtype)
 
+    # Functions in librosa.feature add a dimension
+    # in second-to-last position.
+    # we remove it to match the other features.
     x_rms = librosa.feature.rms(
         S=np.abs(x_spec),
         frame_length=size_win,
         hop_length=stride_win
     ).astype(x_audio.dtype)
+    x_rms = np.squeeze(x_rms, axis=-2)
 
     x_zcr = librosa.feature.zero_crossing_rate(
         y=x_audio,
         frame_length=size_win,
         hop_length=size_win
     ).astype(x_audio.dtype)
+    x_zcr = np.squeeze(x_zcr, axis=-2)
 
     x_flatness = librosa.feature.spectral_flatness(
         S=np.abs(x_spec),
     ).astype(x_audio.dtype)
+    x_flatness = np.squeeze(x_flatness, axis=-2)
+
     
     x_centroid = librosa.feature.spectral_centroid(
         S=np.abs(x_spec)
     ).astype(x_audio.dtype)
+    x_centroid = np.squeeze(x_centroid, axis=-2)
 
     return [
         x_mfcc,
