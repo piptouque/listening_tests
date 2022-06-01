@@ -55,16 +55,18 @@ if __name__ == '__main__':
         config.data.audio.freq.freq_max,
         config.data.audio.freq.nb_mfcc
     )
-    feature_extractor.build(shape_preprocessed)
+    # feature_extractor.build(shape_preprocessed)
 
     def _preprocess(inputs: dict) -> dict:
         x_audio = inputs['audio']
         x_features = feature_extractor(x_audio)
         # keep only left channel for now,
+        x_features = x_features[..., 0]
         # And replace channel by the features as last dim.
-        x = x_features[..., 0]
+        perm = tf.constant([-1, -2]) + tf.stack([tf.rank(x_features)] * 2, axis=0)
+        x_features = tf.transpose(x_features, perm=perm)
+        x = x_features
         y = x
-        # print(x.shape, y.shape)
         return x, y
     ds_train = ds_train.map(_preprocess).batch(
         config.training.size_batch).prefetch(tf.data.AUTOTUNE)
@@ -76,7 +78,6 @@ if __name__ == '__main__':
     # create an instance of the model you want
     model = JukeboxModel(shape_input=shape_input, **vars(config.model.jukebox))
     model.compile(
-        loss=tf.keras.losses.MeanSquaredError(),
         run_eagerly=config.debug.enabled
     )
     #
@@ -94,6 +95,9 @@ if __name__ == '__main__':
         mode='min'
     )
     #
+    model.build(shape_input)
+    model.summary(expand_nested=False)
+    #
     model.fit(
         x=ds_train,
         validation_data=ds_val,
@@ -104,5 +108,3 @@ if __name__ == '__main__':
         epochs=config.training.nb_epochs,
         steps_per_epoch=None
     )
-    model.build(shape_input)
-    model.summary(expand_nested=True)

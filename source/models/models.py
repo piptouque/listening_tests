@@ -180,8 +180,9 @@ class WaveNet(tf.keras.Model):
         )
 
 class JukeboxModel(tf.keras.Model):
-    """"""
+    """Jukebox model"""
     class ResidualSubBlock(tf.keras.Model):
+        """Often used block in the article"""
         def __init__(self,
                 nb_filters: int,
                 size_kernel: int,
@@ -379,22 +380,21 @@ class JukeboxModel(tf.keras.Model):
             beta=beta_codebook
         )
 
-    def _encode(self, x: tf.Tensor) -> List[tf.Tensor]:
-        return [encoder(x) for encoder in self._encoders]
-    def _quantise(self, zs: List[tf.Tensor]) -> List[tf.Tensor]:
-        return [self._codebook(z)['quantised'] for z in zs]
-    def _decode(self, zs: List[tf.Tensor]) -> List[tf.Tensor]:
-        return [decoder(zs[idx_level]) for idx_level, decoder in enumerate(self._decoders)]
-
     def call(self, x: tf.Tensor) -> tf.Tensor:
         xs_hat = []
-        # for idx_level in range(len(self._encoders)):
-        idx_level = 0
-        z = self._encoders[idx_level](x)
-        z_q = self._codebook(z)['quantised']
-        x_hat = self._decoders[idx_level](z_q)
-        xs_hat.append(x_hat) 
-        # for each level, loss over diff of power spectra of x_hat and x
+        zs = []
+        zs_q = []
+        for idx_level in range(len(self._encoders)):
+            z = self._encoders[idx_level](x)
+            z_q = self._codebook(z)['quantised']
+            x_hat = self._decoders[idx_level](z_q)
+            xs_hat.append(x_hat) 
+            zs.append(z)
+            zs_q.append(z_q)
+        xs_hat = tf.stack(xs_hat, axis=-1) 
+        xs = tf.stack([x] * len(self._encoders), axis=-1)
+        # for each level, loss over x_hat and x
+        self.add_loss(tf.math.reduce_mean(tf.keras.metrics.mean_squared_error(xs, xs_hat), axis=-1))
         return xs_hat 
 
 class GstModel(tf.keras.Model):

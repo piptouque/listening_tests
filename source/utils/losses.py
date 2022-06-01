@@ -1,6 +1,7 @@
 
 import tensorflow as tf
 
+class PolyMeanSqueredError()
 class PowerSpectrumLoss(tf.keras.losses.Loss):
     def __init__(self,
         frame_length: int,

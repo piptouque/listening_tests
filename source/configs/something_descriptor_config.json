@@ -21,12 +21,12 @@
     },
     "model": {
         "jukebox": {
-            "nb_levels": 3,
+            "nb_levels": 2,
             "nb_filters": 8,
-            "nb_blocks_sample": [3, 5, 7],
+            "nb_blocks_sample": [3, 5],
             "size_kernel_sample": 4,
             "stride_sample": 2,
-            "nb_blocks_res": [8, 4, 4],
+            "nb_blocks_res": [4, 2],
             "size_kernel_res": 3,
             "rate_dilation_res": 3,
             "size_codebook": 256,
