@@ -47,7 +47,7 @@ _NB_CHANNELS = 2
 
 _RATE_AUDIO = 48000
 # better to have a power of two.
-_SIZE_BLOCKS = 2 ** np.ceil(np.log2(_RATE_AUDIO * 10))
+_SIZE_BLOCKS = int(2 ** np.ceil(np.log2(_RATE_AUDIO * 10)))
 _DTYPE_AUDIO = tf.float32
 
 _RATE_ANNOTATION = 4

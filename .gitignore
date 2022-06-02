@@ -2,7 +2,8 @@
 ##
 
 data/
-saved
+saved/
+.env/
 
 ## VSCode
 
