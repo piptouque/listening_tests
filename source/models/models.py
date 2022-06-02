@@ -391,8 +391,8 @@ class JukeboxModel(tf.keras.Model):
             xs_hat.append(x_hat) 
             zs.append(z)
             zs_q.append(z_q)
-        xs_hat = tf.stack(xs_hat, axis=-1) 
         xs = tf.stack([x] * len(self._encoders), axis=-1)
+        xs_hat = tf.stack(xs_hat, axis=-1) 
         # for each level, loss over x_hat and x
         self.add_loss(tf.math.reduce_mean(tf.keras.metrics.mean_squared_error(xs, xs_hat), axis=-1))
         return xs_hat 

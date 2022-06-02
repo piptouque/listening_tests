@@ -60,17 +60,28 @@ if __name__ == '__main__':
     def _preprocess(inputs: dict) -> dict:
         x_audio = inputs['audio']
         x_features = feature_extractor(x_audio)
-        # keep only left channel for now,
-        x_features = x_features[..., 0]
+        # for now, process left and right channel separately
+        # add batch as the audio channel dim
         # And replace channel by the features as last dim.
-        perm = tf.constant([-1, -2]) + tf.stack([tf.rank(x_features)] * 2, axis=0)
+        # [..., f, t_2, c] -> [c, ..., t_2, f]
+        print(x_features)
+        perm = tf.range(tf.rank(x_features))
+        perm = tf.roll(perm, shift=1, axis=0)
+        perm = tf.concat([perm[:-2], [perm[-1]], [perm[-2]]], 0)
         x_features = tf.transpose(x_features, perm=perm)
+        print(x_features)
         x = x_features
         y = x
         return x, y
-    ds_train = ds_train.map(_preprocess).batch(
-        config.training.size_batch).prefetch(tf.data.AUTOTUNE)
-    ds_val = ds_val.map(_preprocess).batch(config.training.size_batch)
+    
+    # stereo example as two mono examples -> unbatch then btach again.
+    ds_train = ds_train.map(_preprocess) \
+        .unbatch() \
+        .batch(config.training.size_batch) \
+        .prefetch(tf.data.AUTOTUNE)
+    ds_val = ds_val.map(_preprocess) \
+        .unbatch() \
+        .batch(config.training.size_batch)
 
     # Infer processed input shape
     shape_input = ds_train.element_spec[0].shape

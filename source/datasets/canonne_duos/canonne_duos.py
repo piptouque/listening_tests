@@ -14,7 +14,7 @@ import tensorflow_io as tfio
 import dataclasses
 
 
-_URL_DOWNLOAD = "https://todo-data-url"
+_URL_DOWNLOAD = None
 # TODO(canonne_duos): Markdown description  that will appear on the catalog page.
 _DESCRIPTION = """
 Description is **formatted** as markdown.
@@ -46,7 +46,8 @@ _NB_TAKES = 4
 _NB_CHANNELS = 2
 
 _RATE_AUDIO = 48000
-_SIZE_BLOCKS = _RATE_AUDIO * 2
+# better to have a power of two.
+_SIZE_BLOCKS = 2 ** np.ceil(np.log2(_RATE_AUDIO * 10))
 _DTYPE_AUDIO = tf.float32
 
 _RATE_ANNOTATION = 4
