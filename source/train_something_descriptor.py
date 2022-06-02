@@ -64,7 +64,6 @@ if __name__ == '__main__':
         # add batch as the audio channel dim
         # And replace channel by the features as last dim.
         # [..., f, t_2, c] -> [c, ..., t_2, f]
-        print(x_features)
         perm = tf.range(tf.rank(x_features))
         perm = tf.roll(perm, shift=1, axis=0)
         perm = tf.concat([perm[:-2], [perm[-1]], [perm[-2]]], 0)

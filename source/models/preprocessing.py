@@ -160,14 +160,17 @@ def _compute_audio_features_numpy(
 ) -> List[np.ndarray]:
 
     x_spec = librosa.stft(
-            y=x_audio,
-            n_fft=nb_freqs,
-            win_length=size_win,
-            hop_length=stride_win
+        y=x_audio,
+        n_fft=nb_freqs,
+        win_length=size_win,
+        hop_length=stride_win,
+        center=True
     )
-
+    x_spec = x_spec[:-1]
+    print(x_spec.shape)
+    
     x_mel = librosa.feature.melspectrogram(
-        S=np.abs(x_spec)
+        S=np.abs(x_spec),
     ).astype(x_audio.dtype)
 
     x_mfcc = librosa.feature.mfcc(
@@ -181,10 +184,11 @@ def _compute_audio_features_numpy(
         fmax=freq_max,
         sr=rate_sample,
         frame_length=size_win,
-        hop_length=stride_win
+        hop_length=stride_win,
+        center=True
     )
-    x_freq_0 = x_freq_0.astype(x_audio.dtype)
-    x_prob_freq = x_prob_freq.astype(x_audio.dtype)
+    x_freq_0 = x_freq_0.astype(x_audio.dtype)[:-1]
+    x_prob_freq = x_prob_freq.astype(x_audio.dtype)[:-1]
 
     # Functions in librosa.feature add a dimension
     # in second-to-last position.
@@ -192,16 +196,18 @@ def _compute_audio_features_numpy(
     x_rms = librosa.feature.rms(
         S=np.abs(x_spec),
         frame_length=size_win,
-        hop_length=stride_win
+        hop_length=stride_win,
+        center=True
     ).astype(x_audio.dtype)
     x_rms = np.squeeze(x_rms, axis=-2)
 
     x_zcr = librosa.feature.zero_crossing_rate(
         y=x_audio,
         frame_length=size_win,
-        hop_length=size_win
+        hop_length=size_win,
+        center=True
     ).astype(x_audio.dtype)
-    x_zcr = np.squeeze(x_zcr, axis=-2)
+    x_zcr = np.squeeze(x_zcr, axis=-2)[:-1]
 
     x_flatness = librosa.feature.spectral_flatness(
         S=np.abs(x_spec),

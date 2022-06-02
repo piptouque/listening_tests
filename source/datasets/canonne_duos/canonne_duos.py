@@ -46,8 +46,11 @@ _NB_TAKES = 4
 _NB_CHANNELS = 2
 
 _RATE_AUDIO = 48000
+# Wanted length (in seconds) for a single example.
+# Will be increased to the next power of two.
+_LENGTH_BLOCK_DESIRED = 2 
 # better to have a power of two.
-_SIZE_BLOCKS = int(2 ** np.ceil(np.log2(_RATE_AUDIO * 10)))
+_SIZE_BLOCK = int(2 ** np.ceil(np.log2(_RATE_AUDIO * _LENGTH_BLOCK_DESIRED)))
 _DTYPE_AUDIO = tf.float32
 
 _RATE_ANNOTATION = 4
@@ -104,14 +107,17 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
         # TODO(canonne_duos): Specifies the tfds.core.DatasetInfo object
         return tfds.core.DatasetInfo(
             builder=self,
-            description=_DESCRIPTION,
+            metadata=tfds.core.MetadataDict({
+                'rate_sample': _RATE_AUDIO,
+                'rate_annotation': _RATE_ANNOTATION
+            }),
             features=tfds.features.FeaturesDict({
                 # These are the features of your dataset like images, labels ...
-                'audio': tfds.features.Audio(shape=(_SIZE_BLOCKS, _NB_CHANNELS), file_format='wav', sample_rate=_RATE_AUDIO, dtype=tf.float32),
+                'audio': tfds.features.Audio(shape=(_SIZE_BLOCK, _NB_CHANNELS), file_format='wav', sample_rate=_RATE_AUDIO, dtype=tf.float32),
                 'annotations': {
-                    'x_play': tfds.features.Tensor(shape=(_SIZE_BLOCKS, _NB_CHANNELS), dtype=tf.dtypes.float32),
-                    'y_play': tfds.features.Tensor(shape=(_SIZE_BLOCKS, _NB_CHANNELS), dtype=tf.dtypes.float32),
-                    'dir_play': tfds.features.Tensor(shape=(_SIZE_BLOCKS, _NB_CHANNELS), dtype=tf.dtypes.int8),
+                    'x_play': tfds.features.Tensor(shape=(_SIZE_BLOCK, _NB_CHANNELS), dtype=tf.dtypes.float32),
+                    'y_play': tfds.features.Tensor(shape=(_SIZE_BLOCK, _NB_CHANNELS), dtype=tf.dtypes.float32),
+                    'dir_play': tfds.features.Tensor(shape=(_SIZE_BLOCK, _NB_CHANNELS), dtype=tf.dtypes.int8),
                 },
                 'labels': {
                     'idx_duo': tfds.features.ClassLabel(num_classes=_NB_DUOS+1),
@@ -125,6 +131,7 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
             # features, specify them here. They'll be used if
             # `as_supervised=True` in `builder.as_dataset`.
             supervised_keys=('audio', 'labels'),  # Set to `None` to disable
+            description=_DESCRIPTION,
             homepage=_HOMEPAGE,
             citation=_CITATION,
         )
@@ -224,13 +231,13 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
 
     def _split_example(self, example_whole: dict) -> List[dict]:
         x_audio_split = self._split_droplast(
-            example_whole['audio'], _SIZE_BLOCKS)
+            example_whole['audio'], _SIZE_BLOCK)
         ann_x_play_split = self._split_droplast(
-            example_whole['annotations']['x_play'], _SIZE_BLOCKS)
+            example_whole['annotations']['x_play'], _SIZE_BLOCK)
         ann_y_play_split = self._split_droplast(
-            example_whole['annotations']['y_play'], _SIZE_BLOCKS)
+            example_whole['annotations']['y_play'], _SIZE_BLOCK)
         ann_dir_play_split = self._split_droplast(
-            example_whole['annotations']['dir_play'], _SIZE_BLOCKS)
+            example_whole['annotations']['dir_play'], _SIZE_BLOCK)
         list_examples_split = []
         for i in range(x_audio_split.shape[0]):
             list_examples_split.append({
