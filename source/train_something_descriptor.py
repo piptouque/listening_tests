@@ -68,7 +68,6 @@ if __name__ == '__main__':
         perm = tf.roll(perm, shift=1, axis=0)
         perm = tf.concat([perm[:-2], [perm[-1]], [perm[-2]]], 0)
         x_features = tf.transpose(x_features, perm=perm)
-        print(x_features)
         x = x_features
         y = x
         return x, y
@@ -105,8 +104,8 @@ if __name__ == '__main__':
         mode='min'
     )
     #
-    model.build(shape_input)
-    model.summary(expand_nested=False)
+    # model.build(shape_input)
+    # model.summary(expand_nested=False)
     #
     model.fit(
         x=ds_train,

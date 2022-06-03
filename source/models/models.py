@@ -46,7 +46,7 @@ class VectorQuantiser(tf.keras.layers.Layer):
         https://github.com/JeremyCCHsu/vqvae-speech/
     """
 
-    def __init__(self, shape_input: Tuple[int], nb_embeddings: int, axes: Tuple[int], beta: float) -> None:
+    def __init__(self, shape_code: Tuple[int], nb_embeddings: int, axes: Tuple[int], beta: float) -> None:
         """
             axis: 0 -> first non-batch dim
 
@@ -56,7 +56,7 @@ class VectorQuantiser(tf.keras.layers.Layer):
         super(VectorQuantiser, self).__init__()
         self._axes = tuple(axes) 
         s = (nb_embeddings,)
-        s = s + tuple([shape_input[axis] for axis in self._axes])
+        s = s + tuple([shape_code[axis] for axis in self._axes])
         self._vecs_embedding = tf.random.uniform(shape=s, dtype=tf.dtypes.float32)
         self._axes_embedding = tuple(range(1,len(self._axes)+1))
         self._beta = beta
@@ -65,7 +65,7 @@ class VectorQuantiser(tf.keras.layers.Layer):
         """
             z_e: dim -> (batch, not quantised dim (time), quantised dim (channel)) 
         """
-        # tf.debugging.assert_equal(tf.shape(z_e)[1:], self._shape_input[1:])
+        # tf.debugging.assert_equal(tf.shape(z_e)[1:], self._shape_code[1:])
         # dim -> (batch, not quantised dim, nb_embeddings)
         dot_z_embedding = tf.tensordot(z_e, self._vecs_embedding, axes=[self._axes, self._axes_embedding])
         norm_sq_z = tf.reduce_sum(tf.square(z_e), axis=self._axes)
@@ -346,6 +346,7 @@ class JukeboxModel(tf.keras.Model):
     ) -> None:
         tf.debugging.assert_equal(tf.rank(nb_blocks_sample), tf.rank(nb_blocks_sample))
         super(JukeboxModel, self).__init__()
+        self._nb_levels = nb_levels
         self._encoders = [
             self.Encoder(
                 nb_filters,
@@ -356,13 +357,12 @@ class JukeboxModel(tf.keras.Model):
                 size_kernel_res=size_kernel_res,
                 rate_dilation_res=rate_dilation_res 
             )
-            for idx_level in range(nb_levels)
+            for idx_level in range(self._nb_levels)
         ]
         shape_code = self._encoders[-1].compute_output_shape(shape_input)
-        shapes_code = [encoder.compute_output_shape(shape_input) for encoder in self._encoders]
         self._decoders = [
             self.Decoder(
-                nb_channels_output=shape_code[-1],
+                nb_channels_output=shape_input[-1],
                 nb_filters=nb_filters,
                 nb_blocks_up=nb_blocks_sample[idx_level],
                 size_kernel_up=size_kernel_sample,
@@ -371,31 +371,42 @@ class JukeboxModel(tf.keras.Model):
                 size_kernel_res=size_kernel_res,
                 rate_dilation_res=rate_dilation_res 
             )
-            for idx_level in range(nb_levels)
+            for idx_level in range(self._nb_levels)
         ]
         self._codebook = VectorQuantiser(
-            shape_input=shape_code,
+            shape_code=shape_code,
             nb_embeddings=size_codebook,
             axes=[2],
             beta=beta_codebook
         )
-
+    
     def call(self, x: tf.Tensor) -> tf.Tensor:
-        xs_hat = []
-        zs = []
-        zs_q = []
-        for idx_level in range(len(self._encoders)):
+        xs_hat = None
+        for idx_level in range(self.nb_levels):
             z = self._encoders[idx_level](x)
             z_q = self._codebook(z)['quantised']
             x_hat = self._decoders[idx_level](z_q)
-            xs_hat.append(x_hat) 
-            zs.append(z)
-            zs_q.append(z_q)
-        xs = tf.stack([x] * len(self._encoders), axis=-1)
-        xs_hat = tf.stack(xs_hat, axis=-1) 
+            if idx_level == 0:
+                xs_hat = tf.expand_dims(x_hat, axis=-1)
+            else:
+                xs_hat = tf.concat([xs_hat, tf.expand_dims(x_hat, axis=-1)], -1)
+        # xs = tf.stack([x] * len(self._encoders), axis=-1)
+        xs = tf.repeat(tf.expand_dims(x, axis=-1), repeats=self.nb_levels, axis=-1)
         # for each level, loss over x_hat and x
-        self.add_loss(tf.math.reduce_mean(tf.keras.metrics.mean_squared_error(xs, xs_hat), axis=-1))
+        self.add_loss(
+            tf.math.reduce_mean(
+                tf.math.reduce_sum(
+                    tf.keras.metrics.mean_squared_error(xs, xs_hat),
+                    axis=-1
+                ),
+                axis=None
+            )
+        )
         return xs_hat 
+    
+    @property
+    def nb_levels(self) -> int:
+        return self._nb_levels
 
 class GstModel(tf.keras.Model):
     class ReferenceEncoder(tf.keras.Model):
