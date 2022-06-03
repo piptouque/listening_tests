@@ -80,7 +80,7 @@ _PATTERN_DIR_TAKE = r'take_(?P<take>\d+)'
 
 @dataclasses.dataclass
 class CanonneDuosConfig(tfds.core.BuilderConfig):
-    kind_split: Union['split', 'joined'] = 'joined'
+    kind_split: str = 'joined'
 
 
 class CanonneDuos(tfds.core.GeneratorBasedBuilder):
@@ -95,8 +95,6 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
     }
     # pytype: disable=wrong-keyword-args
     BUILDER_CONFIGS = [
-        CanonneDuosConfig(
-            name='split', description='Tracks from the same take and duo are separate examples', kind_split='split'),
         CanonneDuosConfig(
             name='joined', description='Tracks from the same take and duo are joined in a single example', kind_split='joined')
     ]
