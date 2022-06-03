@@ -55,16 +55,23 @@ class VectorQuantiser(tf.keras.layers.Layer):
         """
         super(VectorQuantiser, self).__init__()
         self._axes = tuple(axes) 
-        s = (nb_embeddings,)
-        s = s + tuple([shape_code[axis] for axis in self._axes])
-        self._vecs_embedding = tf.random.uniform(shape=s, dtype=tf.dtypes.float32)
         self._axes_embedding = tuple(range(1,len(self._axes)+1))
         self._beta = beta
+        #
+        shape_embedding = (nb_embeddings,)
+        shape_embedding = shape_embedding + tuple([shape_code[axis] for axis in self._axes])
+        self._shape_embedding = shape_embedding
+        self._vecs_embedding = None
 
     def call(self, z_e: tf.Tensor) -> tf.Tensor:
         """
             z_e: dim -> (batch, not quantised dim (time), quantised dim (channel)) 
         """
+        if self._vecs_embedding is None:
+            self._vecs_embedding = tf.Variable(
+                trainable=True,
+                initial_value=tf.random.uniform(shape=self._shape_embedding, dtype=z_e.dtype)
+            )
         # tf.debugging.assert_equal(tf.shape(z_e)[1:], self._shape_code[1:])
         # dim -> (batch, not quantised dim, nb_embeddings)
         dot_z_embedding = tf.tensordot(z_e, self._vecs_embedding, axes=[self._axes, self._axes_embedding])
@@ -76,8 +83,8 @@ class VectorQuantiser(tf.keras.layers.Layer):
         norm_sq_z = tf.expand_dims(norm_sq_z, axis=-1)
         # Euclidean distance as: dist(x,y) = norm(x)^2 + norm(y)^2  - 2<x,y>
         # Uses implicit broadcasts repeatedly, beware the order of operations.
-        dist = (- 2 * dot_z_embedding + norm_sq_z) + norm_sq_embedding
-        ids_embedding= tf.argmin(dist, axis=-1)
+        dist_quantisation  = (- 2 * dot_z_embedding + norm_sq_z) + norm_sq_embedding
+        ids_embedding = tf.argmin(dist_quantisation, axis=-1)
         z_q = tf.nn.embedding_lookup(self._vecs_embedding, ids_embedding)
         # fix: tf.norm does not interpret 1-uples as integers.
         axes = self._axes[0] if len(self._axes) == 1 else self._axes
@@ -92,92 +99,6 @@ class VectorQuantiser(tf.keras.layers.Layer):
             'similarity': similarity,
             'ids': ids_embedding
        }
-
-class WaveNet(tf.keras.Model):
-    """
-    Modified version of WaveNet
-    Based on: https://github.com/WindQAQ/tensorflow-wavenet/
-    """
-    class ResidualBlock(tf.keras.Model):
-        def __init__(self,
-            nb_filters_dilation: int,
-            nb_filters_skip: int,
-            size_kernel: int,
-            rate_dilation: int,
-            causal: bool=False,
-            use_bias: bool=False
-            ) -> None:
-            self._gau = GatedActivationUnit(
-                   nb_filters_dilation,
-                   size_kernel,
-                   rate_dilation,
-                   causal=causal,
-                   use_bias=use_bias
-            )
-            self._conv_skip = tf.keras.Conv1D(
-                nb_filters_skip,
-                kernel_size=1,
-                padding='same',
-                use_bias=use_bias
-            )
-            self._conv_residual = tf.keras.Conv1D(
-                nb_filters_skip,
-                kernel_size=1,
-                padding='same',
-                use_bias=use_bias
-            )
-        def call(self, x: tf.Tensor) -> tf.Tensor:
-            y_gau = self._gau(x)
-            y_skip = self._conv_skip(y_gau)
-            y_residual = self._conv_residual(y_gau)
-            return y_residual + x, y_skip
-        
-    def __init__(self,
-            size_output: int,
-            nb_blocks_residual: int,
-            nb_filters_residual: int,
-            nb_filters_dilation: int,
-            nb_filters_skip: int,
-            size_kernel: int,
-            rate_dilation_init: int,
-            causal: bool=False,
-            use_bias: bool=False
-            ) -> None:
-        super(WaveNet, self).__init__()
-        self._conv_init = tf.keras.Conv1D(
-            nb_filters_residual,
-            kernel_size=size_kernel, # TODO?: different kernel size at first?
-            padding='same'
-        )
-        self._blocks_res = [
-            self.ResidualBlock(
-                nb_filters_dilation,
-                nb_filters_skip,
-                size_kernel,
-                rate_dilation_init ** idx_block,
-                causal=causal,
-                use_bias=use_bias
-            )
-            for idx_block in range(nb_blocks_residual)]
-        self._block_end = tf.keras.Sequential(
-            tf.keras.Add(),
-            tf.keras.activations.ReLU(),
-            tf.keras.Conv1D(
-                nb_filters_skip,
-                kernel_size=1,
-                padding='same',
-                use_bias=True
-            ),
-            tf.keras.activations.ReLU(),
-            tf.keras.Conv1D(
-                size_output,
-                kernel_size=1,
-                padding='same',
-                use_bias=True
-            ),
-            tf.keras.activations.ReLU(),
-            # TODO: softmax??
-        )
 
 class JukeboxModel(tf.keras.Model):
     """Jukebox model"""
@@ -407,54 +328,3 @@ class JukeboxModel(tf.keras.Model):
     @property
     def nb_levels(self) -> int:
         return self._nb_levels
-
-class GstModel(tf.keras.Model):
-    class ReferenceEncoder(tf.keras.Model):
-        """
-        """
-        def __init__(self,
-            size_input: tf.Tensor,
-            size_kernel: int,
-            rate_dilation: int,
-            nb_heads_att: int,
-        ):
-            super(GstModel.ReferenceEncoder, self).__init__()
-            stride_conv = (2, 2)
-            def _block_conv(nb_filters: int):
-                return tf.keras.Sequential(
-                    tf.keras.Conv2D(
-                        nb_filters,
-                        kernel_size=size_kernel,
-                        strides=stride_conv,
-                        padding='same'
-                    ),
-                    tf.keras.layers.BatchNormalization(),
-                    tf.keras.layers.ReLU()
-                )
-            self._stack_conv = tf.keras.Sequential(
-                _block_conv(32),
-                _block_conv(32),
-                _block_conv(64),
-                _block_conv(64),
-                _block_conv(128),
-                _block_conv(128)
-            )
-
-            size_output_conv = self._stack_conv.compute_output_shape(size_input)
-
-            # replacing RNN with attention.
-            self._net_rec = tf.keras.layers.MultiHeadAttention(
-                num_heads=nb_heads_att,
-                key_dim=size_output_conv,
-                value_dim=size_output_conv,
-                attention_axes=(0),
-                dropout=0.1,
-            )
-
-        def call(self, x: tf.Tensor) -> tf.Tensor:
-            """
-            Input: log-mel spectrograms
-                (time, freq bin, channels)
-            """
-            h = self._stack_conv(x)
-            z = self._net_rec(h)
