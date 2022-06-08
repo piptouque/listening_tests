@@ -2,6 +2,13 @@
     "exp_name": "Something",
     "data": {
         "audio": {
+            "kind": {
+                "type": "descriptors",
+                "features": [
+                    "freq_0",
+                    "prob_freq"
+                ]
+            },
             "time": {
                 "size_win": 1024,
                 "stride_win": 256,
@@ -10,8 +17,7 @@
             "freq": {
                 "freq_min": 80,
                 "freq_max": 10000,
-                "nb_freqs_mel": 64,
-                "nb_mfcc": 8
+                "nb_mfcc": 32
             }
         },
         "annotations": {

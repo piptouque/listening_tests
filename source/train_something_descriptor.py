@@ -1,3 +1,4 @@
+from typing import Tuple
 import os
 import sys
 import tensorflow as tf
@@ -36,9 +37,12 @@ if __name__ == '__main__':
         comp_device = "/cpu:0" 
         os.environ["CUDA_VISIBLE_DEVICES"]=""
 
-    devices = tf.config.list_physical_devices('GPU')
-    print(len(devices))
-    tf.config.experimental.set_memory_growth(device=devices[0], enable=True)
+    if "CUDA_VISIBLE_DEVICES" in os.environ and len(os.environ["CUDA_VISIBLE_DEVICES"]) > 0:
+        devices = tf.config.list_physical_devices('GPU')
+        print(len(devices))
+        tf.config.experimental.set_memory_growth(device=devices[0], enable=True)
+    else:
+        comp_device = "/cpu:0" 
 
     with tf.device(comp_device):
 
@@ -52,6 +56,7 @@ if __name__ == '__main__':
         shape_preprocessed = ds_train.element_spec['audio'].shape
 
         feature_extractor = AudioFeatureExtractor(
+            config.data.audio.kind,
             config.data.audio.time.rate_sample,
             config.data.audio.time.size_win,
             config.data.audio.time.stride_win,
@@ -59,32 +64,20 @@ if __name__ == '__main__':
             config.data.audio.freq.freq_max,
             config.data.audio.freq.nb_mfcc
         )
-        # feature_extractor.build(shape_preprocessed)
 
         @tf.function
-        def _preprocess(inputs: dict) -> dict:
+        def _preprocess(inputs: dict) -> Tuple[tf.Tensor, tf.Tensor]:
             x_audio = inputs['audio']
             x_features = feature_extractor(x_audio)
-            # for now, process left and right channel separately
-            # add batch as the audio channel dim
-            # And replace channel by the features as last dim.
-            # [..., f, t_2, c] -> [c, ..., t_2, f]
-            perm = tf.range(tf.rank(x_features))
-            perm = tf.roll(perm, shift=1, axis=0)
-            perm = tf.concat([perm[:-2], [perm[-1]], [perm[-2]]], 0)
-            x_features = tf.transpose(x_features, perm=perm)
             x = x_features
             y = x
             return x, y
         
-        # stereo example as two mono examples -> unbatch then btach again.
+        # for now, process left and right channel separately
+        # stereo example as two mono examples -> unbatch then batch again.
         ds_train = ds_train.map(_preprocess) \
             .unbatch() \
             .batch(config.training.size_batch) \
-            .prefetch(tf.data.AUTOTUNE)
-        ds_val = ds_val.map(_preprocess) \
-            .unbatch() \
-            .batch(config.training.size_batch)
 
         # Infer processed input shape
         shape_input = ds_train.element_spec[0].shape
@@ -95,29 +88,9 @@ if __name__ == '__main__':
             run_eagerly=config.debug.enabled
         )
         #
-        # Callbacks
-        cb_log = tf.keras.callbacks.TensorBoard(
-            config.save.path.log_dir,
-            **vars(config.save.log)
-        )
-        path_checkpoint = os.path.join(config.save.path.checkpoint_dir, '{epoch:02d}.hdf5')
-        cb_checkpoint = tf.keras.callbacks.ModelCheckpoint(
-            filepath=path_checkpoint,
-            save_best_only=True,
-            monitor='val_acc',
-            mode='min'
-        )
-        #
-        # model.build(shape_input)
-        # model.summary(expand_nested=False)
-        #
         model.fit(
             x=ds_train,
-            validation_data=ds_val,
-            callbacks=[
-                cb_log,
-                cb_checkpoint
-            ],
+            callbacks=[ ],
             batch_size=config.training.size_batch,
             epochs=config.training.nb_epochs,
             steps_per_epoch=None

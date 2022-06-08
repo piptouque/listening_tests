@@ -11,7 +11,7 @@
                 "freq_min": 80,
                 "freq_max": 10000,
                 "nb_mel_freqs": 64,
-                "nb_mfcc": 8
+                "nb_mfcc": 32
             }
         },
         "annotations": {

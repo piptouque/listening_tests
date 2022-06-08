@@ -1,7 +1,6 @@
-from typing import Tuple, Union, List
+from typing import Tuple, List
 
 import tensorflow as tf
-from abc import ABCMeta, abstractmethod, abstractproperty
 
 
 class GatedActivationUnit(tf.keras.layers.Layer):
@@ -101,28 +100,74 @@ class VectorQuantiser(tf.keras.layers.Layer):
        }
 
 class JukeboxModel(tf.keras.Model):
+
+    @staticmethod
+    def _conv_dim(
+        dim_data: int,
+        nb_filters: int,
+        size_kernel: int,
+        rate_dilation: int = 1,
+        stride: int = 1
+    ) -> tf.keras.layers.Layer:
+        if dim_data == 1:
+            return tf.keras.layers.Conv1D(
+                   nb_filters,
+                   kernel_size=size_kernel,
+                   dilation_rate=rate_dilation,
+                   strides=stride,
+                   padding='same'
+                )
+        elif dim_data == 2:
+            return tf.keras.layers.Conv2D(
+                   nb_filters,
+                   kernel_size=size_kernel,
+                   dilation_rate=rate_dilation,
+                   strides=stride,
+                   padding='same'
+                )
+        else:
+            raise NotImplementedError()
+
+    @staticmethod
+    def _conv_transpose_dim(
+        dim_data: int,
+        nb_filters: int,
+        size_kernel: int,
+        rate_dilation: int = 1,
+        stride: int = 1
+    ) -> tf.keras.layers.Layer:
+        if dim_data == 1:
+            return tf.keras.layers.Conv1DTranspose(
+                   nb_filters,
+                   kernel_size=size_kernel,
+                   dilation_rate=rate_dilation,
+                   strides=stride,
+                   padding='same'
+                )
+        elif dim_data == 2:
+            return tf.keras.layers.Conv2DTranspose(
+                   nb_filters,
+                   kernel_size=size_kernel,
+                   dilation_rate=rate_dilation,
+                   strides=stride,
+                   padding='same'
+                )
+        else:
+            raise NotImplementedError()
+
     """Jukebox model"""
     class ResidualSubBlock(tf.keras.Model):
         """Often used block in the article"""
         def __init__(self,
+                dim_data: int,
                 nb_filters: int,
                 size_kernel: int,
                 rate_dilation: int,
             ) -> None:
             super(JukeboxModel.ResidualSubBlock, self).__init__()
             self._convs = tf.keras.Sequential([
-                tf.keras.layers.Conv1D(
-                   nb_filters,
-                   kernel_size=size_kernel,
-                   dilation_rate=rate_dilation,
-                   padding='same'
-                ),
-                tf.keras.layers.Conv1D(
-                    nb_filters,
-                    kernel_size=size_kernel,
-                    dilation_rate=1,
-                    padding='same'
-                )
+                JukeboxModel._conv_dim(dim_data=dim_data, nb_filters=nb_filters, size_kernel=size_kernel, rate_dilation=rate_dilation),
+                JukeboxModel._conv_dim(dim_data=dim_data, nb_filters=nb_filters, size_kernel=size_kernel, rate_dilation=1)
             ])
         def call(self, x: tf.Tensor) -> tf.Tensor:
             h = self._convs(x) + x
@@ -130,6 +175,7 @@ class JukeboxModel(tf.keras.Model):
 
     class DownsamplingBlock(tf.keras.Model):
         def __init__(self,
+            dim_data: int,
             nb_filters: int,
             size_kernel_down: int,
             stride_down: int,
@@ -138,15 +184,16 @@ class JukeboxModel(tf.keras.Model):
             rate_dilation_res: int,
         ) -> None:
             super(JukeboxModel.DownsamplingBlock, self).__init__()
-            self._conv_down = tf.keras.layers.Conv1D(
-                nb_filters,
-                kernel_size=size_kernel_down,
-                strides=stride_down,
-                padding='same'
+            self._conv_down = JukeboxModel._conv_dim(
+                dim_data=dim_data,
+                nb_filters=nb_filters,
+                size_kernel=size_kernel_down,
+                stride=stride_down,
             )
             self._blocks_res = [
                 JukeboxModel.ResidualSubBlock(
-                    nb_filters,
+                    dim_data=dim_data,
+                    nb_filters=nb_filters,
                     size_kernel=size_kernel_res,
                     rate_dilation=rate_dilation_res
                 )
@@ -161,6 +208,7 @@ class JukeboxModel(tf.keras.Model):
 
     class UpsamplingBlock(tf.keras.Model):
         def __init__(self,
+            dim_data: int,
             nb_filters: int,
             size_kernel_up: int,
             stride_up: int,
@@ -171,16 +219,17 @@ class JukeboxModel(tf.keras.Model):
             super(JukeboxModel.UpsamplingBlock, self).__init__()
             self._blocks_res = [
                 JukeboxModel.ResidualSubBlock(
-                    nb_filters,
+                    dim_data=dim_data,
+                    nb_filters=nb_filters,
                     size_kernel=size_kernel_res,
                     rate_dilation=rate_dilation_res
                 )
             for _ in range(nb_blocks_res)]
-            self._conv_up = tf.keras.layers.Conv1DTranspose(
-                nb_filters,
-                kernel_size=size_kernel_up,
-                strides=stride_up,
-                padding='same'
+            self._conv_up = JukeboxModel._conv_transpose_dim(
+                dim_data=dim_data,
+                nb_filters=nb_filters,
+                size_kernel=size_kernel_up,
+                stride=stride_up,
             )
         def call(self, z: tf.Tensor) -> tf.Tensor:
             for block in self._blocks_res:
@@ -191,6 +240,7 @@ class JukeboxModel(tf.keras.Model):
 
     class Encoder(tf.keras.Model):
         def __init__(self,
+            dim_data: int,
             nb_filters: int,
             nb_blocks_down: int,
             size_kernel_down: int,
@@ -202,12 +252,13 @@ class JukeboxModel(tf.keras.Model):
             super(JukeboxModel.Encoder, self).__init__()
             self._blocks_down = [
                JukeboxModel.DownsamplingBlock(
-                   nb_filters,
-                   size_kernel_down,
-                   stride_down,
-                   nb_blocks_res,
-                   size_kernel_res,
-                   rate_dilation_res
+                   dim_data=dim_data,
+                   nb_filters=nb_filters,
+                   size_kernel_down=size_kernel_down,
+                   stride_down=stride_down,
+                   nb_blocks_res=nb_blocks_res,
+                   size_kernel_res=size_kernel_res,
+                   rate_dilation_res=rate_dilation_res
                ) 
             for _ in range(nb_blocks_down)]
         def call(self, x: tf.Tensor) -> tf.Tensor:
@@ -218,6 +269,7 @@ class JukeboxModel(tf.keras.Model):
 
     class Decoder(tf.keras.Model):
         def __init__(self,
+            dim_data: int,
             nb_channels_output: int,
             nb_filters: int,
             nb_blocks_up: int,
@@ -230,19 +282,20 @@ class JukeboxModel(tf.keras.Model):
             super(JukeboxModel.Decoder, self).__init__()
             self._blocks_up = [
                JukeboxModel.UpsamplingBlock(
-                   nb_filters,
-                   size_kernel_up,
-                   stride_up,
-                   nb_blocks_res,
-                   size_kernel_res,
-                   rate_dilation_res
+                   dim_data=dim_data,
+                   nb_filters=nb_filters,
+                   size_kernel_up=size_kernel_up,
+                   stride_up=stride_up,
+                   nb_blocks_res=nb_blocks_res,
+                   size_kernel_res=size_kernel_res,
+                   rate_dilation_res=rate_dilation_res
                ) 
             for _ in range(nb_blocks_up)]
-            self._conv_proj = tf.keras.layers.Conv1D(
-                nb_channels_output,
-                kernel_size=size_kernel_res,
-                strides=1,
-                padding='same'
+            self._conv_proj = JukeboxModel._conv_dim(
+                dim_data=dim_data,
+                nb_filters=nb_channels_output,
+                size_kernel=size_kernel_res,
+                stride=1,
             )
         def call(self, z: tf.Tensor) -> tf.Tensor:
             h = z
@@ -253,7 +306,7 @@ class JukeboxModel(tf.keras.Model):
 
 
     def __init__(self,
-        shape_input: tf.Tensor,
+        shape_input: Tuple[int, ...],
         nb_levels: int = 3,
         nb_filters: int=32,
         nb_blocks_sample: List[int]=(3, 5, 7),
@@ -267,10 +320,13 @@ class JukeboxModel(tf.keras.Model):
     ) -> None:
         tf.debugging.assert_equal(tf.rank(nb_blocks_sample), tf.rank(nb_blocks_sample))
         super(JukeboxModel, self).__init__()
+        self._shape_input = shape_input
         self._nb_levels = nb_levels
+        dim_data = len(self._shape_input) - 2
         self._encoders = [
             self.Encoder(
-                nb_filters,
+                dim_data=dim_data,
+                nb_filters=nb_filters,
                 nb_blocks_down=nb_blocks_sample[idx_level],
                 size_kernel_down=size_kernel_sample,
                 stride_down=stride_sample,
@@ -280,10 +336,11 @@ class JukeboxModel(tf.keras.Model):
             )
             for idx_level in range(self._nb_levels)
         ]
-        shape_code = self._encoders[-1].compute_output_shape(shape_input)
+        shape_code = self._encoders[-1].compute_output_shape(self._shape_input)
         self._decoders = [
             self.Decoder(
-                nb_channels_output=shape_input[-1],
+                dim_data=dim_data,
+                nb_channels_output=self._shape_input[-1],
                 nb_filters=nb_filters,
                 nb_blocks_up=nb_blocks_sample[idx_level],
                 size_kernel_up=size_kernel_sample,
@@ -324,7 +381,7 @@ class JukeboxModel(tf.keras.Model):
             )
         )
         return xs_hat 
-    
+
     @property
     def nb_levels(self) -> int:
         return self._nb_levels
