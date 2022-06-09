@@ -41,7 +41,7 @@ if __name__ == '__main__':
         print(len(devices))
         tf.config.experimental.set_memory_growth(device=devices[0], enable=True)
     else:
-        comp_device = "/cpu:0" 
+        comp_device = "/cpu:0"
 
     with tf.device(comp_device):
 
@@ -77,8 +77,8 @@ if __name__ == '__main__':
         # stereo example as two mono examples -> unbatch then batch again.
         ds_train = ds_train.map(_preprocess) \
             .unbatch() \
-            .batch(config.training.size_batch) \
-
+            .shuffle(4) \
+            .batch(config.training.size_batch)
         # Infer processed input shape
         shape_input = ds_train.element_spec[0].shape
 
