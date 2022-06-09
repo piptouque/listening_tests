@@ -8,12 +8,12 @@
             "name": "Something (descriptors): Train",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/source/train_something_descriptor.py",
+            "program": "${workspaceFolder}/source/train_something.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
                 "--config",
-                "${workspaceFolder}/source/configs/something_descriptor_config.json",
+                "${workspaceFolder}/source/configs/something_descriptors_config.json",
                 "--save_root",
                 "/data/anasynth_nonbp/thiel/saved_models/listening_tests/",
                 "--dataset",
@@ -21,20 +21,20 @@
             ]
         },
         {
-            "name": "Jukebox: Train",
+            "name": "Something (spectrum): Train",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/source/train_jukebox.py",
+            "program": "${workspaceFolder}/source/train_something.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
                 "--config",
-                "${workspaceFolder}/source/configs/jukebox_config.json",
+                "${workspaceFolder}/source/configs/something_spectrum_config.json",
                 "--save_root",
                 "/data/anasynth_nonbp/thiel/saved_models/listening_tests/",
                 "--dataset",
                 "/data/anasynth_nonbp/thiel/tensorflow_datasets/"
             ]
-        }
+        },
     ]
 }

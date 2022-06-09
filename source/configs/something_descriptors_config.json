@@ -1,0 +1,69 @@
+{
+    "exp_name": "Something",
+    "data": {
+        "audio": {
+            "time": {
+                "size_win": 1024,
+                "stride_win": 256,
+                "rate_sample": 48000
+            },
+            "freq": {
+                "freq_min": 80,
+                "freq_max": 10000,
+                "nb_mfcc": 32
+            },
+            "features": {
+                "kind": "descriptors",
+                "names": [
+                    "freq_0",
+                    "prob_freq",
+                    "root_mean_square",
+                    "zero_crossing_rate",
+                    "spectral_flatness",
+                    "spectral_centroid"
+                ]
+            }
+        },
+        "annotations": {
+            "size_kernel": 3,
+            "sigma": 1
+        }
+    },
+    "model": {
+        "jukebox": {
+            "nb_levels": 2,
+            "nb_filters": 8,
+            "nb_blocks_sample": [3, 5],
+            "size_kernel_sample": 4,
+            "stride_sample": 2,
+            "nb_blocks_res": [4, 2],
+            "size_kernel_res": 3,
+            "rate_dilation_res": 3,
+            "size_codebook": 256,
+            "beta_codebook": 0.99
+        }
+    },
+    "loss": {
+    },
+    "training": {
+        "rate_learning": 0.02,
+        "size_batch": 8,
+        "nb_epochs": 10
+    },
+    "dataset": {
+        "name": "canonne_duos",
+        "validation_split": 0.1
+    },
+    "save": {
+        "log": {
+            "update_freq": 1
+        },
+        "checkpoint": {
+            "max_to_keep": 5,
+            "checkpoint_interval": 2
+        }
+    },
+    "debug": {
+        "enabled": true
+    }
+}

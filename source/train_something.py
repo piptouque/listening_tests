@@ -14,7 +14,6 @@ from utils.utils import get_args
 import datasets.canonne_duos.canonne_duos
 
 
-
 if __name__ == '__main__':
     # capture the config path from the run arguments
     # then process the json configuration file
@@ -55,14 +54,15 @@ if __name__ == '__main__':
         
         shape_preprocessed = ds_train.element_spec['audio'].shape
 
-        feature_extractor = AudioFeatureExtractor(
-            config.data.audio.kind,
-            config.data.audio.time.rate_sample,
-            config.data.audio.time.size_win,
-            config.data.audio.time.stride_win,
-            config.data.audio.freq.freq_min,
-            config.data.audio.freq.freq_max,
-            config.data.audio.freq.nb_mfcc
+        feature_extractor = AudioFeatureExtractor.make(
+            kind_feature=config.data.audio.features.kind,
+            name_features=config.data.audio.features.names,
+            rate_sample=config.data.audio.time.rate_sample,
+            size_win=config.data.audio.time.size_win,
+            stride_win=config.data.audio.time.stride_win,
+            freq_min=config.data.audio.freq.freq_min,
+            freq_max=config.data.audio.freq.freq_max,
+            nb_mfcc=config.data.audio.freq.nb_mfcc
         )
 
         @tf.function
