@@ -1,6 +1,7 @@
 import os
 import json
 import pathlib
+import datetime
 
 from types import SimpleNamespace
 
@@ -21,9 +22,11 @@ def get_config_from_json(path: str):
 def process_config(args):
     config = get_config_from_json(args.config)
     config.save.path = SimpleNamespace()
+    now = datetime.datetime.now()
+    pat_now = f'{now.year}-{now.month}-{now.day}_{now.hour}-{now.minute}-{now.second}'
     config.save.path.log_dir = os.path.join(
-        args.save_root, config.exp_name, "log/")
+        args.save_root, config.exp_name, pat_now, 'log')
     config.save.path.checkpoint_dir = os.path.join(
-        args.save_root, config.exp_name, "checkpoint/")
+        args.save_root, config.exp_name, pat_now, 'checkpoint')
     config.dataset.path = pathlib.Path(args.dataset)
     return config

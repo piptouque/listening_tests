@@ -64,7 +64,7 @@ class AudioFeatureExtractor(tf.keras.layers.Layer):
         self._freq_max = freq_max
         self._nb_mfcc = nb_mfcc
         #
-        self._name_features = name_features
+        self._names_features = name_features
 
     @staticmethod
     def make(
@@ -81,13 +81,13 @@ class AudioFeatureExtractor(tf.keras.layers.Layer):
         else:
             raise NotImplementedError()
 
-    def _compute_audio_features(
+    def _compute_audio_descriptors(
         self,
         x_audio: tf.Tensor,
     ) -> Dict[str, tf.Tensor]:
         # order matters, must be the same as the output of *_numpy
         _NAMES_FEATURES = [
-            'mfcc', 'freq_0', 'prob_freq',
+            'freq_0', 'prob_freq',
             'root_mean_square', 'zero_crossing_rate',
             'spectral_flatness', 'spectral_centroid'
         ]
@@ -95,7 +95,7 @@ class AudioFeatureExtractor(tf.keras.layers.Layer):
         # forward permutation: from [..., time, channel] to [channel, ..., time]
         perm = tf.roll(tf.range(tf.rank(x_audio)), shift=1, axis=0)
         x_features = tf.numpy_function(
-            self._compute_audio_features_numpy,
+            self._compute_audio_descriptors_numpy,
             [
                 tf.transpose(x_audio, perm=perm),
                 self._rate_sample,
@@ -104,7 +104,6 @@ class AudioFeatureExtractor(tf.keras.layers.Layer):
                 self._freq_min,
                 self._freq_max,
                 self._size_win,
-                self._nb_mfcc
             ],
             Tout=[x_audio.dtype] * len(_NAMES_FEATURES)
         )
@@ -114,9 +113,33 @@ class AudioFeatureExtractor(tf.keras.layers.Layer):
             x_features[idx] = tf.transpose(feat, perm=perm_inv)
         return dict(zip(_NAMES_FEATURES, x_features))
 
+    def _compute_audio_spectrum(
+        self,
+        x_audio: tf.Tensor,
+    ) -> Dict[str, tf.Tensor]:
+        # our pre-processing assumes channel-first (no batch)
+        # forward permutation: from [..., time, channel] to [channel, ..., time]
+        perm = tf.roll(tf.range(tf.rank(x_audio)), shift=1, axis=0)
+        x_features = tf.numpy_function(
+            self._compute_audio_spectrum_numpy,
+            [
+                tf.transpose(x_audio, perm=perm),
+                self._size_win,
+                self._stride_win,
+                self._size_win,
+                self._nb_mfcc
+            ],
+            Tout=[x_audio.dtype]
+        )
+        # inverse permutation: from [channel, ..., feature, time] to [..., feature, time, channel]
+        perm_inv = tf.roll(tf.range(tf.rank(x_features)), shift=-1, axis=0)
+        x_features = tf.transpose(x_features, perm=perm_inv)
+        return dict(zip(self._names_features, [x_features]))
+
+
 
     @staticmethod
-    def _compute_audio_features_numpy(
+    def _compute_audio_descriptors_numpy(
         x_audio: np.ndarray,
         rate_sample: int,
         size_win: int,
@@ -124,7 +147,6 @@ class AudioFeatureExtractor(tf.keras.layers.Layer):
         freq_min: float,
         freq_max: float,
         nb_freqs: int,
-        nb_mfcc: int
     ) -> List[np.ndarray]:
 
         # librosa does not compute frame_length
@@ -140,15 +162,6 @@ class AudioFeatureExtractor(tf.keras.layers.Layer):
         )
         x_spec = x_spec[..., :-1]
         
-        x_mel = librosa.feature.melspectrogram(
-            S=np.abs(x_spec),
-        ).astype(x_audio.dtype)
-
-        x_mfcc = librosa.feature.mfcc(
-            S=librosa.power_to_db(np.abs(x_mel)**2),
-            n_mfcc=nb_mfcc
-        ).astype(x_audio.dtype)
-
         x_freq_0, _, x_prob_freq = librosa.pyin(
             y=x_audio,
             fmin=freq_min,
@@ -192,7 +205,6 @@ class AudioFeatureExtractor(tf.keras.layers.Layer):
         x_centroid = np.squeeze(x_centroid, axis=-2)
 
         return [
-            x_mfcc,
             x_freq_0,
             x_prob_freq,
             x_rms,
@@ -201,20 +213,53 @@ class AudioFeatureExtractor(tf.keras.layers.Layer):
             x_centroid
         ]
 
+    @staticmethod
+    def _compute_audio_spectrum_numpy(
+        x_audio: np.ndarray,
+        size_win: int,
+        stride_win: int,
+        nb_freqs: int,
+        nb_mfcc: int
+    ) -> List[np.ndarray]:
+
+        # librosa does not compute frame_length
+        # as time // stride
+        # so we need to remove an element (arbitrarily, the last one).
+        # see: https://github.com/librosa/librosa/issues/1278
+        x_spec = librosa.stft(
+            y=x_audio,
+            n_fft=nb_freqs,
+            win_length=size_win,
+            hop_length=stride_win,
+            center=True
+        )
+        x_spec = x_spec[..., :-1]
+        
+        x_mel = librosa.feature.melspectrogram(
+            S=np.abs(x_spec),
+        ).astype(x_audio.dtype)
+
+        x_mfcc = librosa.feature.mfcc(
+            S=librosa.power_to_db(np.abs(x_mel)**2),
+            n_mfcc=nb_mfcc
+        ).astype(x_audio.dtype)
+
+        return x_mfcc
+
 class AudioSpectrumExtractor(AudioFeatureExtractor):
     """For spectrum only"""
     def call(self, x_audio: tf.Tensor) -> tf.Tensor:
         """Compute feature tensor"""
-        x_features = self._compute_audio_features(x_audio)
-        tf.assert_equal(len(self._name_features), 1)
-        x_features = x_features[self._name_features[0]]
+        tf.assert_equal(len(self._names_features), 1)
+        x_features = self._compute_audio_spectrum(x_audio)
+        x_features = x_features[self._names_features[0]]
         # [f, t_2, c] -> [c, f, t_2, 1]
         perm = tf.range(tf.rank(x_features))
         perm = tf.roll(perm, shift=1, axis=0)
         x_features = tf.transpose(x_features, perm=perm)
         x_features = tf.expand_dims(x_features, axis=-1)
-        output_shape = self._compute_output_shape(x_audio.shape)
-        x_features = tf.ensure_shape(x_features, shape=output_shape)
+        # output_shape = self._compute_output_shape(x_audio.shape)
+        # x_features = tf.ensure_shape(x_features, shape=output_shape)
         return x_features
 
     def _compute_output_shape(self, input_shape: tf.TensorShape) -> tf.TensorShape:
@@ -240,8 +285,8 @@ class AudioDescriptorsExtractor(AudioFeatureExtractor):
         x_audio: tf.Tensor,
     ) -> tf.Tensor:
         """Compute feature tensor"""
-        x_features = self._compute_audio_features(x_audio)
-        x_features = [x_features[name_feature_used] for name_feature_used in self._name_features]
+        x_features = self._compute_audio_descriptors(x_audio)
+        x_features = [x_features[name_feature_used] for name_feature_used in self._names_features]
         # All features should have the same shape
         # That way, they can be stacked in a new tensor.
         x_features = tf.stack(x_features, axis=0)
@@ -252,8 +297,8 @@ class AudioDescriptorsExtractor(AudioFeatureExtractor):
         perm = tf.roll(perm, shift=1, axis=0)
         perm = tf.concat([perm[:-2], [perm[-1]], [perm[-2]]], 0)
         x_features = tf.transpose(x_features, perm=perm)
-        output_shape = self._compute_output_shape(x_audio.shape)
-        x_features = tf.ensure_shape(x_features, shape=output_shape)
+        # output_shape = self._compute_output_shape(x_audio.shape)
+        # x_features = tf.ensure_shape(x_features, shape=output_shape)
         return x_features
 
     def _compute_output_shape(self, input_shape: tf.TensorShape) -> tf.TensorShape:
@@ -267,7 +312,7 @@ class AudioDescriptorsExtractor(AudioFeatureExtractor):
         # roll to make channels the first dim
         output_shape = np.roll(output_shape, shift=1, axis=0)
         # insert the new channel dimension (previously features) at the end
-        output_shape = np.append(output_shape, len(self._name_features))
+        output_shape = np.append(output_shape, len(self._names_features))
         output_shape = tf.TensorShape(output_shape)
         return output_shape
 

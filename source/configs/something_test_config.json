@@ -1,5 +1,5 @@
 {
-    "exp_name": "Jukebox",
+    "exp_name": "something_test",
     "data": {
         "audio": {
             "time": {
@@ -10,8 +10,13 @@
             "freq": {
                 "freq_min": 80,
                 "freq_max": 10000,
-                "nb_mel_freqs": 64,
                 "nb_mfcc": 32
+            },
+            "features": {
+                "kind": "spectrum",
+                "names": [
+                    "mfcc"
+                ]
             }
         },
         "annotations": {
@@ -21,12 +26,12 @@
     },
     "model": {
         "jukebox": {
-            "nb_levels": 3,
+            "nb_levels": 2,
             "nb_filters": 8,
-            "nb_blocks_sample": [3, 5, 7],
+            "nb_blocks_sample": [1, 2],
             "size_kernel_sample": 4,
             "stride_sample": 2,
-            "nb_blocks_res": [8, 4, 4],
+            "nb_blocks_res": [4, 2],
             "size_kernel_res": 3,
             "rate_dilation_res": 3,
             "size_codebook": 256,
@@ -34,18 +39,14 @@
         }
     },
     "loss": {
-        "power_spectrum": {
-            "frame_length": 1024,
-            "step_frame": 512
-        }
     },
     "training": {
         "rate_learning": 0.02,
-        "size_batch": 8,
+        "size_batch": 512,
         "nb_epochs": 10
     },
     "dataset": {
-        "name": "canonne_duos",
+        "name": "mnist",
         "validation_split": 0.1
     },
     "save": {
