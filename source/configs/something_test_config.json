@@ -10,7 +10,7 @@
             "freq": {
                 "freq_min": 80,
                 "freq_max": 10000,
-                "nb_mfcc": 32
+                "nb_freqs_mel": 32
             },
             "features": {
                 "kind": "spectrum",
@@ -18,20 +18,16 @@
                     "mfcc"
                 ]
             }
-        },
-        "annotations": {
-            "size_kernel": 3,
-            "sigma": 1
         }
-    },
-    "model": {
+},
+"model": {
         "jukebox": {
-            "nb_levels": 2,
+            "nb_levels": 3,
             "nb_filters": 8,
-            "nb_blocks_sample": [1, 2],
+            "nb_blocks_sample": [1, 2, 3],
             "size_kernel_sample": 4,
             "stride_sample": 2,
-            "nb_blocks_res": [4, 2],
+            "nb_blocks_res": [4, 2, 2],
             "size_kernel_res": 3,
             "rate_dilation_res": 3,
             "size_codebook": 256,
@@ -46,7 +42,7 @@
         "nb_epochs": 10
     },
     "dataset": {
-        "name": "mnist",
+        "name": "yes_no",
         "validation_split": 0.1
     },
     "save": {

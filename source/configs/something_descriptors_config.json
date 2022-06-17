@@ -10,7 +10,7 @@
             "freq": {
                 "freq_min": 80,
                 "freq_max": 10000,
-                "nb_mfcc": 32
+                "nb_freqs_mel": 32
             },
             "features": {
                 "kind": "descriptors",
@@ -23,10 +23,6 @@
                     "spectral_centroid"
                 ]
             }
-        },
-        "annotations": {
-            "size_kernel": 3,
-            "sigma": 1
         }
     },
     "model": {
@@ -47,7 +43,7 @@
     },
     "training": {
         "rate_learning": 0.02,
-        "size_batch": 8,
+        "size_batch": 64,
         "nb_epochs": 10
     },
     "dataset": {

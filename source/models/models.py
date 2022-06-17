@@ -1,6 +1,94 @@
-from typing import Tuple, List
+from typing import Tuple, List, Dict
+import re
 
 import tensorflow as tf
+
+
+class ConvDim(tf.keras.layers.Layer):
+    """Utility variable-dimension Conv"""
+    def __init__(self,
+        nb_filters: int,
+        size_kernel: int,
+        rate_dilation: int = 1,
+        stride: int = 1,
+        activation: str = None
+    ) -> None:
+        super().__init__()
+        self._nb_filters = nb_filters
+        self._size_kernel = size_kernel
+        self._rate_dilation = rate_dilation
+        self._stride = stride
+        self._activation = activation
+        self._padding = 'same'
+        #
+        self._conv = None
+    
+    def build(self, shape_input: Tuple[int, ...]) -> None:
+        """_summary_
+
+        Args:
+            shape_input (Tuple[int, ...]): _description_
+
+        Raises:
+            NotImplementedError: _description_
+        """
+        super(ConvDim, self).build(shape_input)
+        if len(shape_input) == 3:
+            self._conv = tf.keras.layers.Conv1D(
+                self._nb_filters,
+                kernel_size=self._size_kernel,
+                dilation_rate=self._rate_dilation,
+                strides=self._stride,
+                padding=self._padding,
+                activation=self._activation
+            )
+        elif len(shape_input) == 4:
+            self._conv = tf.keras.layers.Conv2D(
+                self._nb_filters,
+                kernel_size=self._size_kernel,
+                dilation_rate=self._rate_dilation,
+                strides=self._stride,
+                padding=self._padding,
+                activation=self._activation
+            )
+        else:
+            raise NotImplementedError()
+
+    def call(self, x: tf.Tensor) -> tf.Tensor:
+        return self._conv(x)
+
+class ConvDimTranspose(ConvDim):
+    """Utility variable-dimension transposed Conv"""
+    def build(self, shape_input: Tuple[int, ...]) -> None:
+        """_summary_
+
+        Args:
+            shape_input (Tuple[int, ...]): _description_
+
+        Raises:
+            NotImplementedError: _description_
+        """
+        if len(shape_input) == 3:
+            self._conv = tf.keras.layers.Conv1DTranspose(
+                self._nb_filters,
+                kernel_size=self._size_kernel,
+                dilation_rate=self._rate_dilation,
+                strides=self._stride,
+                padding=self._padding,
+                activation=self._activation
+            )
+        elif len(shape_input) == 4:
+            self._conv = tf.keras.layers.Conv2DTranspose(
+                self._nb_filters,
+                kernel_size=self._size_kernel,
+                dilation_rate=self._rate_dilation,
+                strides=self._stride,
+                padding=self._padding,
+                activation=self._activation
+            )
+        else:
+            raise NotImplementedError()
+
 
 
 class GatedActivationUnit(tf.keras.layers.Layer):
@@ -62,10 +150,10 @@ class VectorQuantiser(tf.keras.layers.Layer):
         self._shape_embedding = None
         self._vecs_embedding = None
 
-    def build(self, shape_code: Tuple[int]) -> None:
-        super(VectorQuantiser, self).build(shape_code)
+    def build(self, shape_input: Tuple[int, ...]) -> None:
+        super(VectorQuantiser, self).build(shape_input)
         shape_embedding = (self._nb_embeddings,)
-        shape_embedding = shape_embedding + tuple([shape_code[axis] for axis in self._axes])
+        shape_embedding = shape_embedding + tuple([shape_input[axis] for axis in self._axes])
         self._shape_embedding = shape_embedding
         self._vecs_embedding = self.add_weight(
             name="codebook",
@@ -73,6 +161,9 @@ class VectorQuantiser(tf.keras.layers.Layer):
             # initializer=lambda: tf.random.uniform(shape=self._shape_embedding),
             trainable=True
         )
+
+    def get_codebook(self) -> tf.Tensor:
+        return tf.constant(self._vecs_embedding)
 
     def call(self, z_e: tf.Tensor) -> tf.Tensor:
         """
@@ -94,98 +185,69 @@ class VectorQuantiser(tf.keras.layers.Layer):
         z_q = tf.nn.embedding_lookup(self._vecs_embedding, ids_embedding)
         # fix: tf.norm does not interpret 1-uples as integers.
         axes = self._axes[0] if len(self._axes) == 1 else self._axes
-        loss_commit = tf.reduce_mean(tf.norm(tf.stop_gradient(z_e) - z_q, axis=axes))
-        loss_codebook = tf.reduce_mean(tf.norm(z_e - tf.stop_gradient(z_q), axis=axes))
-        self.add_loss(loss_codebook + loss_commit * self._beta)
+        loss_commit = tf.identity(tf.reduce_mean(tf.norm(tf.stop_gradient(z_e) - z_q, axis=axes)), name="loss_commit")
+        loss_codebook = tf.identity(tf.reduce_mean(tf.norm(z_e - tf.stop_gradient(z_q), axis=axes)), name="loss_codebook")
+        loss_vq = tf.identity(loss_codebook + loss_commit * self._beta, name="loss_vq")
+        self.add_loss(loss_vq)
         # similarity as normalised dot product of latent and embedding vectors
         similarity = (dot_z_embedding / tf.sqrt(norm_sq_z)) / tf.sqrt(norm_sq_embedding)
         return {
             'quantised': z_q,
-            'vecs': self._vecs_embedding,
             'similarity': similarity,
-            'ids': ids_embedding
-       }
+            'ids_codebook': ids_embedding
+        }
 
-class JukeboxModel(tf.keras.Model):
+
+class JukeboxAutoEncoder(tf.keras.Model):
     """Jukebox model"""
 
-    class ConvDim(tf.keras.layers.Layer):
-        """Utility variable-dimension Conv"""
-        def __init__(self,
-            nb_filters: int,
-            size_kernel: int,
-            rate_dilation: int = 1,
-            stride: int = 1
-        ) -> None:
-            super().__init__()
-            self._nb_filters = nb_filters
-            self._size_kernel = size_kernel
-            self._rate_dilation = rate_dilation
-            self._stride = stride
-            self._padding = 'same'
-            #
-            self._conv = None
-        
-        def build(self, shape_input: Tuple[int, ...]) -> None:
-            """...."""
-            if len(shape_input) == 3:
-               self._conv = tf.keras.layers.Conv1D(
-                   self._nb_filters,
-                   kernel_size=self._size_kernel,
-                   dilation_rate=self._rate_dilation,
-                   strides=self._stride,
-                   padding=self._padding
-               )
-            elif len(shape_input) == 4:
-               self._conv = tf.keras.layers.Conv2D(
-                   self._nb_filters,
-                   kernel_size=self._size_kernel,
-                   dilation_rate=self._rate_dilation,
-                   strides=self._stride,
-                   padding=self._padding
-               )
-            else:
-                raise NotImplementedError()
-
-        def call(self, x: tf.Tensor) -> tf.Tensor:
-            return self._conv(x)
-
-    class ConvDimTranspose(ConvDim):
-        """Utility variable-dimension transposed Conv"""
-        def build(self, shape_input: Tuple[int, ...]) -> None:
-            """...."""
-            if len(shape_input) == 3:
-               self._conv = tf.keras.layers.Conv1DTranpose(
-                   self._nb_filters,
-                   kernel_size=self._size_kernel,
-                   dilation_rate=self._rate_dilation,
-                   strides=self._stride,
-                   padding=self._padding
-               )
-            elif len(shape_input) == 4:
-               self._conv = tf.keras.layers.Conv2DTranspose(
-                   self._nb_filters,
-                   kernel_size=self._size_kernel,
-                   dilation_rate=self._rate_dilation,
-                   strides=self._stride,
-                   padding=self._padding
-               )
-            else:
-                raise NotImplementedError()
-
-
-
-    class ResidualSubBlock(tf.keras.Model):
-        """Often used block in the article"""
+    class ForwardResidualSubBlock(tf.keras.Model):
+        """Frequently used block in the article"""
         def __init__(self,
                 nb_filters: int,
                 size_kernel: int,
                 rate_dilation: int,
             ) -> None:
-            super(JukeboxModel.ResidualSubBlock, self).__init__()
+            super(JukeboxAutoEncoder.ForwardResidualSubBlock, self).__init__()
             self._convs = tf.keras.Sequential([
-                JukeboxModel.ConvDim(nb_filters=nb_filters, size_kernel=size_kernel, rate_dilation=rate_dilation),
-                JukeboxModel.ConvDimTranspose(nb_filters=nb_filters, size_kernel=size_kernel, rate_dilation=1)
+                ConvDim(
+                    nb_filters=nb_filters,
+                    size_kernel=size_kernel,
+                    rate_dilation=rate_dilation,
+                    activation='relu'
+                ),
+                ConvDim(
+                    nb_filters=nb_filters,
+                    size_kernel=size_kernel,
+                    rate_dilation=1,
+                    activation='relu'
+                )
+            ])
+        def call(self, x: tf.Tensor) -> tf.Tensor:
+            h = self._convs(x) + x
+            return h
+
+    class BackwardResidualSubBlock(tf.keras.Model):
+        """Frequently used block in the article"""
+        def __init__(self,
+                nb_filters: int,
+                size_kernel: int,
+                rate_dilation: int,
+            ) -> None:
+            super(JukeboxAutoEncoder.BackwardResidualSubBlock, self).__init__()
+            self._convs = tf.keras.Sequential([
+                ConvDim(
+                    nb_filters=nb_filters,
+                    size_kernel=size_kernel,
+                    rate_dilation=1,
+                    activation='relu'
+                ),
+                ConvDim(
+                    nb_filters=nb_filters,
+                    size_kernel=size_kernel,
+                    rate_dilation=rate_dilation,
+                    activation='relu'
+                )
             ])
         def call(self, x: tf.Tensor) -> tf.Tensor:
             h = self._convs(x) + x
@@ -201,14 +263,15 @@ class JukeboxModel(tf.keras.Model):
             size_kernel_res: int,
             rate_dilation_res: int,
         ) -> None:
-            super(JukeboxModel.DownsamplingBlock, self).__init__()
-            self._conv_down = JukeboxModel.ConvDim(
+            super(JukeboxAutoEncoder.DownsamplingBlock, self).__init__()
+            self._conv_down = ConvDim(
                 nb_filters=nb_filters,
                 size_kernel=size_kernel_down,
                 stride=stride_down,
+                activation='relu'
             )
             self._blocks_res = [
-                JukeboxModel.ResidualSubBlock(
+                JukeboxAutoEncoder.ForwardResidualSubBlock(
                     nb_filters=nb_filters,
                     size_kernel=size_kernel_res,
                     rate_dilation=rate_dilation_res
@@ -232,18 +295,19 @@ class JukeboxModel(tf.keras.Model):
             size_kernel_res: int,
             rate_dilation_res: int,
         ) -> None:
-            super(JukeboxModel.UpsamplingBlock, self).__init__()
+            super(JukeboxAutoEncoder.UpsamplingBlock, self).__init__()
             self._blocks_res = [
-                JukeboxModel.ResidualSubBlock(
+                JukeboxAutoEncoder.BackwardResidualSubBlock(
                     nb_filters=nb_filters,
                     size_kernel=size_kernel_res,
                     rate_dilation=rate_dilation_res
                 )
             for _ in range(nb_blocks_res)]
-            self._conv_up = JukeboxModel.ConvDimTranspose(
+            self._conv_up = ConvDimTranspose(
                 nb_filters=nb_filters,
                 size_kernel=size_kernel_up,
                 stride=stride_up,
+                activation='relu'
             )
         def call(self, z: tf.Tensor) -> tf.Tensor:
             for block in self._blocks_res:
@@ -263,9 +327,9 @@ class JukeboxModel(tf.keras.Model):
             size_kernel_res: int,
             rate_dilation_res: int
         ) -> None:
-            super(JukeboxModel.Encoder, self).__init__()
+            super(JukeboxAutoEncoder.Encoder, self).__init__()
             self._blocks_down = [
-               JukeboxModel.DownsamplingBlock(
+               JukeboxAutoEncoder.DownsamplingBlock(
                    nb_filters=nb_filters,
                    size_kernel_down=size_kernel_down,
                    stride_down=stride_down,
@@ -292,9 +356,9 @@ class JukeboxModel(tf.keras.Model):
             size_kernel_res: int,
             rate_dilation_res: int
         ) -> None:
-            super(JukeboxModel.Decoder, self).__init__()
+            super(JukeboxAutoEncoder.Decoder, self).__init__()
             self._blocks_up = [
-               JukeboxModel.UpsamplingBlock(
+               JukeboxAutoEncoder.UpsamplingBlock(
                    nb_filters=nb_filters,
                    size_kernel_up=size_kernel_up,
                    stride_up=stride_up,
@@ -303,10 +367,11 @@ class JukeboxModel(tf.keras.Model):
                    rate_dilation_res=rate_dilation_res
                ) 
             for _ in range(nb_blocks_up)]
-            self._conv_proj = JukeboxModel.ConvDim(
+            self._conv_proj = ConvDim(
                 nb_filters=nb_channels_output,
                 size_kernel=size_kernel_res,
                 stride=1,
+                activation=None
             )
         def call(self, z: tf.Tensor) -> tf.Tensor:
             h = z
@@ -329,8 +394,7 @@ class JukeboxModel(tf.keras.Model):
         beta_codebook: float=0.99
     ) -> None:
         tf.debugging.assert_equal(tf.rank(nb_blocks_sample), tf.rank(nb_blocks_sample))
-        super(JukeboxModel, self).__init__()
-        self._nb_levels = nb_levels
+        super(JukeboxAutoEncoder, self).__init__()
         self._encoders = [
             self.Encoder(
                 nb_filters=nb_filters,
@@ -341,7 +405,7 @@ class JukeboxModel(tf.keras.Model):
                 size_kernel_res=size_kernel_res,
                 rate_dilation_res=rate_dilation_res 
             )
-            for idx_level in range(self._nb_levels)
+            for idx_level in range(nb_levels)
         ]
         self._fn_decoder = lambda nb_channels_output, i: self.Decoder(
             nb_channels_output=nb_channels_output,
@@ -356,7 +420,7 @@ class JukeboxModel(tf.keras.Model):
         self._decoders = None
         # The shapes of the codes are different for each level,
         # only the last axis is quantised, which should be the same for all levels
-        self._codebook = VectorQuantiser(
+        self._vector_quantiser = VectorQuantiser(
             nb_embeddings=size_codebook,
             axes=[-1],
             beta=beta_codebook
@@ -367,37 +431,140 @@ class JukeboxModel(tf.keras.Model):
         """Build stuff"""
         self._decoders = [
             self._fn_decoder(shape_input[-1], idx_level)
-            for idx_level in range(self._nb_levels)
+            for idx_level in range(len(self._encoders))
         ]
-        super().build(shape_input)
+        super(JukeboxAutoEncoder, self).build(shape_input)
         shapes_code = [encoder.compute_output_shape(shape_input) for encoder in self._encoders]
         tf.debugging.Assert(all(shape_code[-1] == shapes_code[0][-1] for shape_code in shapes_code), shapes_code)
+
+    def encode(self, x: tf.Tensor, axis: int) -> tf.Tensor:
+        """Encode single audio example x.
+
+        Args:
+            x (tf.Tensor): 3-D (batch, time, channel) or 4-D (batch, feature, time, channel) tensor.
+            axis (int): Axis into which to insert the levels.
+
+        Returns:
+            tf.Tensor: _description_
+        """
+        return tf.stack([encoder(x) for encoder in self._encoders], axis=axis)    
+
+
+    def decode(self, zs: tf.Tensor, axis: int) -> tf.Tensor:
+        """Decode the multi-level latent codes zs.
+
+        Args:
+            zs (tf.Tensor): 4-D tensor or 5-D tensor
+            axis (int): Levels axis.
+
+        Returns:
+            tf.Tensor: 4-D or 5-D tensor.
+        """
+        zs_unstacked = tf.unstack(zs, axis=axis)
+        return tf.stack([
+                encoder(zs_unstacked[idx_level])
+                for encoder, idx_level in enumerate(self._encoders)
+            ],
+            axis=axis)    
+    
+    def quantise(self, zs: tf.Tensor, axis: int) -> Dict[str, tf.Tensor]:
+        """_summary_
+
+        Args:
+            zs (tf.Tensor): _description_
+            axis (int): _description_
+
+        Returns:
+            Dict[str, tf.Tensor]: The quantise output tensor for each key.
+        """
+        zs_unstacked = tf.unstack(zs, axis=axis)
+        zs_list_vq = [
+                self._vector_quantiser(z)
+                for z in enumerate(zs_unstacked)
+        ]
+        keys_vq = zs_list_vq[0].keys()
+        zs_dict_vq = zip([
+            (key, tf.stack([z for z in zs_list_vq[key]], axis=axis))
+            for key in keys_vq
+        ])
+        return zs_dict_vq
+
+
+    def call(self, x: tf.Tensor) -> tf.Tensor:
+        """Process input
+        Returns auto-encoding of input
+        """
+        xs_hat = []
+        for idx_level in range(len(self._encoders)):
+            z = self._encoders[idx_level](x)
+            z_q = self._vector_quantiser(z)['quantised']
+            x_hat = self._decoders[idx_level](z_q)
+            xs_hat.append(x_hat)
+        xs_hat = tf.stack(xs_hat, 1)
+        xs = tf.repeat(tf.expand_dims(x, axis=1), repeats=len(self._encoders), axis=1)
+        # for each level, loss over x_hat and x
+        loss_reconstruct = tf.identity(tf.math.reduce_mean(
+            tf.math.reduce_sum(tf.keras.metrics.mean_squared_error(xs, xs_hat), axis=1),
+            axis=None
+        ), name="loss_reconstruct")
+        self.add_loss(loss_reconstruct)
+        return xs_hat
+
+class CouplingResolver(tf.keras.Model):
+    def __init__(self,
+        conv_nb_filters: int,
+        conv_size_kernel: int,
+        att_nb_heads: int 
+    ) -> None:
+        self._att_nb_heads = att_num_heads
+        #
+        self._att = None
+
+        self._conv = tf.keras.Sequetial()
+
+    def build(self, shape_input: Tuple[int, ...]) -> None:
+        # self._att = tf.keras.layers.MultiHeadAttention( num_heads=self._att_nb_heads, key_dim=)
+        pass
+
+    def call(self, z_a: tf.Tensor) -> tf.Tensor:
+        """_summary_
+
+        Args:
+            x_a (tf.Tensor): _description_
+
+        Returns:
+            tf.Tensor: _description_
+        """
+        # z_b = 
+        # return z_b
+        pass
+
+class SomethingModel(tf.keras.Model):
+    def __init__(self, auto_encoder: JukeboxAutoEncoder, coupling_resolver: CouplingResolver) -> None:
+        self._auto_encoder = auto_encoder
+        self._coupling_resolver = coupling_resolver
     
     def call(self, x: tf.Tensor) -> tf.Tensor:
-        """Process input"""
-        xs_hat = None
-        for idx_level in range(self.nb_levels):
-            z = self._encoders[idx_level](x)
-            z_q = self._codebook(z)['quantised']
-            x_hat = self._decoders[idx_level](z_q)
-            if idx_level == 0:
-                xs_hat = tf.expand_dims(x_hat, axis=-1)
-            else:
-                xs_hat = tf.concat([xs_hat, tf.expand_dims(x_hat, axis=-1)], -1)
-        # xs = tf.stack([x] * len(self._encoders), axis=-1)
-        xs = tf.repeat(tf.expand_dims(x, axis=-1), repeats=self.nb_levels, axis=-1)
-        # for each level, loss over x_hat and x
-        self.add_loss(
-            tf.math.reduce_mean(
-                tf.math.reduce_sum(
-                    tf.keras.metrics.mean_squared_error(xs, xs_hat),
-                    axis=-1
-                ),
-                axis=None
-            )
-        )
-        return xs_hat 
+        """_summary_
 
-    @property
-    def nb_levels(self) -> int:
-        return self._nb_levels
+        Args:
+            x (tf.Tensor): _description_
+
+        Returns:
+            tf.Tensor: _description_
+        """
+        # x: [batch, ..., t, channel] -> xs: [channel, batch, ..., t, 1]
+        perm = tf.roll(tf.range(tf.rank(x)), shift=1, axis=0)
+        xs = tf.expand_dims(tf.transpose(x, perm=perm), -1)
+        # Encode each channel separately as [batch, ...t, 1] tensors
+        # zs: [channel, batch, ...t, latent_channel]
+        zs = tf.map_fn(self._auto_encoder.encode, xs, back_prop=True)
+        # Get the 
+        zs_dict_vq = tf.map_fn(self._auto_encoder.quantise, zs, back_prop=True)
+        es = zs_dict_vq['ids_codebook']
+        zs_q = zs_dict_vq['quantised']
+
+    def compute_loss(self, x, y, y_pred, sample_weight) -> tf.Tensor:
+        # TODO: match name of loss
+        _PAT_LOSS_NAME = re.compile(r'/loss_(?P<name>\w)(_\d)?:\d$')
+

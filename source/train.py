@@ -5,7 +5,7 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 
 from data_loaders.example_data_loader import ExampleDatasetGenerator
-from models.models import JukeboxModel
+from models.models import JukeboxAutoEncoder
 from models.preprocessing import AudioFeatureExtractor
 from utils.dirs import create_dirs
 from utils.config import process_config
@@ -13,34 +13,6 @@ from utils.utils import get_args
 
 import datasets.canonne_duos.canonne_duos
 
-
-class Preprocessor(tf.keras.Model):
-    def __init__(self, feature_extractor: tf.keras.Model, config: object) -> None:
-        super(Preprocessor, self).__init__()
-        self._feature_extractor = feature_extractor
-        self._config = config
-
-    def _preprocess_mnist(self, x: tf.Tensor) -> tf.Tensor:
-        # x_audio = inputs['audio']
-        # x_features = feature_extractor(x_audio)
-        # x = x_features
-        # y = x
-        x_image = x
-        x = tf.cast(x_image, tf.float32)
-        return x
-
-    def _preprocess_audio(self, x: tf.Tensor) -> tf.Tensor:
-        x_audio = x
-        x_features = self._feature_extractor(x_audio)
-        x = x_features
-        return x
-
-    def call(self, x: tf.Tensor) -> tf.Tensor:
-        if self._config.dataset.name == 'mnist':
-            return self._preprocess_mnist(x)
-        else:
-            return self._preprocess_audio(x)
-        
 
 if __name__ == '__main__':
     # capture the config path from the run arguments
@@ -81,7 +53,8 @@ if __name__ == '__main__':
             ),
             tfds.core.ReadInstruction(
                 'train',
-                to=int(100*config.dataset.validation_split)
+                to=int(100*config.dataset.validation_split),
+                unit='%'
             )
         ]
         ds_train, ds_val = tfds.load(
@@ -99,31 +72,41 @@ if __name__ == '__main__':
             stride_win=config.data.audio.time.stride_win,
             freq_min=config.data.audio.freq.freq_min,
             freq_max=config.data.audio.freq.freq_max,
-            nb_mfcc=config.data.audio.freq.nb_mfcc
+            nb_freqs_mel=config.data.audio.freq.nb_freqs_mel
         )
 
-        preprocessor = Preprocessor(feature_extractor, config)
+        def prep_ds(ds: tf.data.Dataset):
+            """Reshaping the dataset before pre-processing.
 
-        name_field = 'image' if config.dataset.name == 'mnist' else 'audio'
-        # for now, process left and right channel separately
-        # stereo example as two mono examples -> unbatch then batch again.
-        ds_train = ds_train \
-            .map(lambda inputs: (inputs[name_field], None)) \
-            # .batch(config.training.size_batch) \
-            # .prefetch(tf.data.AUTOTUNE)
-            # .map( _preprocess, num_parallel_calls=tf.data.AUTOTUNE) \
-            # .unbatch() \
-            # .shuffle(4) \
-        ds_val = ds_val \
-            .map(lambda inputs: (inputs[name_field], None)) \
-            # .batch(config.training.size_batch) \
-            # .prefetch(tf.data.AUTOTUNE)
-            # .map(_preprocess, num_parallel_calls=tf.data.AUTOTUNE) \
-            # .unbatch() \
-            # .shuffle(4) \
-        if name_field == 'audio':
-            ds_train = ds_train.unbatch()
-            ds_val = ds_val.unbatch()
+            Args:
+                ds (tf.data.Dataset): _description_
+
+            Returns:
+                _type_: _description_
+            """
+            name_field = 'audio'
+            ds = ds.map(lambda inputs: inputs[name_field])
+            #
+            has_channel_dim = ds.element_spec.shape.rank >= 2
+            is_monophonic = ds.element_spec.shape[-1] == 1
+            if is_monophonic or not has_channel_dim:
+                if is_monophonic:
+                    ds = ds.map(lambda el: tf.squeeze(el, axis=[-1]))
+                # fabricate polyphonic examples from two consecutive monophonic examples.
+                ds = ds \
+                    .batch(2, drop_remainder=True) \
+                    .map(
+                        lambda el: tf.transpose(el, perm=tf.roll(tf.range(tf.rank(el)), shift=-1, axis=0))
+                    )
+            # Split example between input and target
+            ds_a = ds.map(lambda el: tuple(tf.unstack(tf.expand_dims(el, axis=-1), axis=-2)))
+            ds_b = ds_a.map(lambda *inputs: inputs[::-1])
+            ds = ds_a.concatenate(ds_b)
+            return ds
+
+        ds_train = prep_ds(ds_train)
+        ds_val = prep_ds(ds_val) \
+
         ds_train = ds_train \
             .shuffle(4) \
             .batch(config.training.size_batch) \
@@ -137,8 +120,8 @@ if __name__ == '__main__':
 
         # create an instance of the model you want
         inputs = tf.keras.Input(shape=shape_input[1:])
-        preprocessed_inputs = preprocessor(inputs)
-        jukebox = JukeboxModel(**vars(config.model.jukebox))
+        preprocessed_inputs = feature_extractor(inputs)
+        jukebox = JukeboxAutoEncoder(**vars(config.model.jukebox))
         outputs = jukebox(preprocessed_inputs)
         model = tf.keras.Model(inputs, outputs)
         model.compile(
