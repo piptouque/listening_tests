@@ -495,20 +495,29 @@ class JukeboxAutoEncoder(tf.keras.Model):
         Returns auto-encoding of input
         """
         xs_hat = []
+        axis = 1
         for idx_level in range(len(self._encoders)):
             z = self._encoders[idx_level](x)
             z_q = self._vector_quantiser(z)['quantised']
             x_hat = self._decoders[idx_level](z_q)
             xs_hat.append(x_hat)
-        xs_hat = tf.stack(xs_hat, 1)
-        xs = tf.repeat(tf.expand_dims(x, axis=1), repeats=len(self._encoders), axis=1)
-        # for each level, loss over x_hat and x
-        loss_reconstruct = tf.identity(tf.math.reduce_mean(
-            tf.math.reduce_sum(tf.keras.metrics.mean_squared_error(xs, xs_hat), axis=1),
-            axis=None
-        ), name="loss_reconstruct")
-        self.add_loss(loss_reconstruct)
+        xs_hat = tf.stack(xs_hat, axis)
+        self.add_loss(self.get_reconstruction_loss(x, xs_hat, axis))
         return xs_hat
+    
+    @staticmethod
+    def get_reconstruction_loss(x: tf.Tensor, xs_hat: tf.Tensor, axis: int) -> tf.Tensor:
+        nb_levels = xs_hat.shape[axis]
+        xs = tf.repeat(tf.expand_dims(x, axis=axis), repeats=nb_levels, axis=axis)
+        # for each level, loss over x_hat and x
+        loss_reconstruct = tf.identity(
+            tf.math.reduce_mean(
+                tf.math.reduce_sum(tf.keras.metrics.mean_squared_error(xs, xs_hat), axis=axis),
+                axis=None
+            ),
+            name="loss_reconstruct"
+        )
+        return loss_reconstruct
 
 class CouplingResolver(tf.keras.Model):
     def __init__(self,
@@ -544,25 +553,32 @@ class SomethingModel(tf.keras.Model):
         self._auto_encoder = auto_encoder
         self._coupling_resolver = coupling_resolver
     
-    def call(self, x: tf.Tensor) -> tf.Tensor:
+    def call(self, x: tf.Tensor, training: bool) -> tf.Tensor:
         """_summary_
 
         Args:
             x (tf.Tensor): _description_
+            training (bool): _description_
 
         Returns:
             tf.Tensor: _description_
         """
+        axis=1
         # x: [batch, ..., t, channel] -> xs: [channel, batch, ..., t, 1]
         perm = tf.roll(tf.range(tf.rank(x)), shift=1, axis=0)
-        xs = tf.expand_dims(tf.transpose(x, perm=perm), -1)
+        x = tf.expand_dims(tf.transpose(x, perm=perm), -1)
         # Encode each channel separately as [batch, ...t, 1] tensors
         # zs: [channel, batch, ...t, latent_channel]
-        zs = tf.map_fn(self._auto_encoder.encode, xs, back_prop=True)
-        # Get the 
-        zs_dict_vq = tf.map_fn(self._auto_encoder.quantise, zs, back_prop=True)
+        zs = tf.map_fn(lambda el: self._auto_encoder.encode(el, axis=axis), x, back_prop=True)
+        zs_dict_vq = tf.map_fn(lambda el: self._auto_encoder.quantise(el, axis=axis), zs, back_prop=True)
         es = zs_dict_vq['ids_codebook']
-        zs_q = zs_dict_vq['quantised']
+
+
+        if training:
+            zs_q = zs_dict_vq['quantised']
+            xs_hat = tf.map_fn(lambda el: self._auto_encoder.decode(el, axis=axis), zs_q, back_prop=True)
+            loss_reconstruct = self._auto_encoder.get_reconstruction_loss(x, xs_hat, axis=axis)
+            self.add_loss(loss_reconstruct)
 
     def compute_loss(self, x, y, y_pred, sample_weight) -> tf.Tensor:
         # TODO: match name of loss

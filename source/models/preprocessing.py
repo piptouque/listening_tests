@@ -312,6 +312,7 @@ class AudioSpectrumExtractor(AudioFeatureExtractor):
         shape_output = tf.TensorShape(shape_output)
         return shape_output
     
+
 class AudioDescriptorsExtractor(AudioFeatureExtractor):
     """For descriptors only"""
     def _extract_features(self,
