@@ -5,7 +5,7 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 
 from data_loaders.example_data_loader import ExampleDatasetGenerator
-from models.models import JukeboxAutoEncoder
+from models.models import SomethingModel, JukeboxAutoEncoder, CouplingSolver, VectorQuantiser
 from models.preprocessing import AudioFeatureExtractor
 from utils.dirs import create_dirs
 from utils.config import process_config
@@ -121,8 +121,24 @@ if __name__ == '__main__':
         # create an instance of the model you want
         inputs = tf.keras.Input(shape=shape_input[1:])
         preprocessed_inputs = feature_extractor(inputs)
-        jukebox = JukeboxAutoEncoder(**vars(config.model.jukebox))
-        outputs = jukebox(preprocessed_inputs)
+        # The shapes of the codes are different for each level,
+        # only the last axis is quantised, which should be the same for all levels
+        vector_quantiser = VectorQuantiser(
+            axes=[-1],
+            **vars(config.model.vector_quantiser)
+        )
+        auto_encoder = JukeboxAutoEncoder(
+            vector_quantiser=vector_quantiser,
+            nb_levels=config.model.something.nb_levels,
+            **vars(config.model.jukebox)
+        )
+        coupling_solver = CouplingSolver(
+            vector_quantiser=vector_quantiser,
+            nb_levels=config.model.something.nb_levels,
+            **vars(config.model.coupling_solver)
+        )
+        something = SomethingModel(vector_quantiser, auto_encoder, coupling_solver)
+        outputs = something(preprocessed_inputs)
         model = tf.keras.Model(inputs, outputs)
         model.compile(
             metrics=[],

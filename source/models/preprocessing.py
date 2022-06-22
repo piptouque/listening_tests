@@ -313,6 +313,7 @@ class AudioSpectrumExtractor(AudioFeatureExtractor):
         return shape_output
     
 
+
 class AudioDescriptorsExtractor(AudioFeatureExtractor):
     """For descriptors only"""
     def _extract_features(self,

@@ -21,17 +21,26 @@
         }
     },
     "model": {
+        "vector_quantiser": {
+            "nb_embeddings": 256,
+            "beta": 0.99
+        },
         "jukebox": {
-            "nb_levels": 2,
             "nb_filters": 8,
             "nb_blocks_sample": [3, 5],
             "size_kernel_sample": 4,
             "stride_sample": 2,
             "nb_blocks_res": [4, 2],
             "size_kernel_res": 3,
-            "rate_dilation_res": 3,
-            "size_codebook": 256,
-            "beta_codebook": 0.99
+            "rate_dilation_res": 3
+        },
+        "coupling_solver": {
+            "conv_nb_filters": 2,
+            "conv_size_kernel": 2,
+            "att_nb_heads": 3 
+        },
+        "something": {
+            "nb_levels": 2
         }
     },
     "loss": {
