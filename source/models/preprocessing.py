@@ -8,43 +8,6 @@ import tensorflow_io as tfio
 
 import librosa
 
-def preprocess_audio(
-        x_audio: tf.Tensor,
-        x_ann: Dict[str, tf.Tensor],
-    config: object
-) -> Tuple[tf.Tensor, Dict[str, tf.Tensor]]:
-    """_summary_
-
-    Args:
-        x_audio (tf.Tensor): _description_
-        x_ann (Dict[str, tf.Tensor]): _description_
-        config (object): _description_
-
-    Returns:
-        Tuple[tf.Tensor, Dict[str, tf.Tensor]]: _description_
-    """
-    #
-    x_ann['dir_play'] = _compute_change_play(
-        x_ann['dir_play'], config.annotations.size_kernel, config.annotations.sigma)
-    #
-    x_spec, x_ann_spec = _compute_spectrum(x_audio, x_ann,
-                                           config.audio.freq.nb_freqs,
-                                           config.audio.time.size_win,
-                                           config.audio.time.stride_win)
-
-    x_mel = tf.stack([
-        tfio.audio.melscale(
-            el_spec,
-            fmin=config.audio.freq.freq_min,
-            fmax=config.audio.freq.freq_max,
-            rate=config.audio.time.rate_sample,
-            mels=config.audio.freq.nb_freqs_mel
-        ) for el_spec in tf.unstack(x_spec, axis=-1)],
-        axis=-1
-    )
-    #
-    return x_mel, x_ann_spec
-
 class AudioFeatureExtractor(tf.keras.layers.Layer):
     """Simple audio feature extractor"""
     def __init__(self,
@@ -95,21 +58,6 @@ class AudioFeatureExtractor(tf.keras.layers.Layer):
     @abstractmethod
     def compute_output_shape(self, shape_input: tf.TensorShape) -> tf.TensorShape:
         return NotImplemented
-
-    @staticmethod
-    def make(
-        kind_feature: str,
-        name_features: List[str],
-        **kwargs
-    ) -> None:
-        """Factory method
-        """
-        if kind_feature == "descriptors":
-            return AudioDescriptorsExtractor(**kwargs, names_features=name_features)
-        elif kind_feature == "spectrum":
-            return AudioSpectrumExtractor(**kwargs, names_features=name_features)
-        else:
-            raise NotImplementedError()
 
     def _compute_audio_descriptors(
         self,
@@ -257,39 +205,6 @@ class AudioFeatureExtractor(tf.keras.layers.Layer):
             x_centroid
         ]
 
-    @staticmethod
-    def _compute_audio_spectrum_numpy(
-        x_audio: np.ndarray,
-        size_win: int,
-        stride_win: int,
-        nb_freqs: int,
-        nb_freqs_mel: int
-    ) -> List[np.ndarray]:
-
-        # librosa does not compute frame_length
-        # as time // stride
-        # so we need to remove an element (arbitrarily, the last one).
-        # see: https://github.com/librosa/librosa/issues/1278
-        x_spec = librosa.stft(
-            y=x_audio,
-            n_fft=nb_freqs,
-            win_length=size_win,
-            hop_length=stride_win,
-            center=True
-        )
-        x_spec = x_spec[..., :-1]
-        
-        x_mel = librosa.feature.melspectrogram(
-            S=np.abs(x_spec),
-        ).astype(x_audio.dtype)
-
-        x_mfcc = librosa.feature.mfcc(
-            S=librosa.power_to_db(np.abs(x_mel)**2),
-            n_mfcc=nb_freqs_mel
-        ).astype(x_audio.dtype)
-
-        return x_mfcc
-
 class AudioSpectrumExtractor(AudioFeatureExtractor):
     """For spectrum only"""
     def _extract_features(self, x_audio: tf.Tensor) -> tf.Tensor:
@@ -300,7 +215,7 @@ class AudioSpectrumExtractor(AudioFeatureExtractor):
         return x_features
 
     def compute_output_shape(self, shape_input: tf.TensorShape) -> tf.TensorShape:
-        """Compute here so we don't loose the shape info due to preprocessing. 
+        """Compute here so we don't loose the shape info due to preprocessing.
         """
         shape_output = np.asarray(shape_input.as_list())
         # change (downsample) time dimension.
@@ -311,7 +226,6 @@ class AudioSpectrumExtractor(AudioFeatureExtractor):
         shape_output = np.insert(shape_output, -1, self._nb_freqs_mel)
         shape_output = tf.TensorShape(shape_output)
         return shape_output
-    
 
 
 class AudioDescriptorsExtractor(AudioFeatureExtractor):

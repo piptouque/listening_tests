@@ -26,11 +26,11 @@
             "beta": 0.99
         },
         "jukebox": {
-            "nb_filters": 8,
             "nb_blocks_sample": [3, 5],
+            "nb_blocks_res": [4, 2],
+            "nb_filters": 8,
             "size_kernel_sample": 4,
             "stride_sample": 2,
-            "nb_blocks_res": [4, 2],
             "size_kernel_res": 3,
             "rate_dilation_res": 3
         },
@@ -40,7 +40,9 @@
             "att_nb_heads": 3 
         },
         "something": {
-            "nb_levels": 2
+            "gamma_coupling": 0.99,
+            "gamma_quantisation_codebook": 0.99,
+            "gamma_quantisation_commit": 0.99
         }
     },
     "loss": {

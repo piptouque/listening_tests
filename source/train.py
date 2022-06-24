@@ -1,12 +1,12 @@
 from typing import Tuple
 import os
 import sys
+
 import tensorflow as tf
 import tensorflow_datasets as tfds
 
-from data_loaders.example_data_loader import ExampleDatasetGenerator
 from models.models import SomethingModel, JukeboxAutoEncoder, CouplingSolver, VectorQuantiser
-from models.preprocessing import AudioFeatureExtractor
+from models.preprocessing import AudioDescriptorsExtractor, AudioSpectrumExtractor
 from utils.dirs import create_dirs
 from utils.config import process_config
 from utils.utils import get_args
@@ -64,9 +64,15 @@ if __name__ == '__main__':
             download=True
         )
         
-        feature_extractor = AudioFeatureExtractor.make(
-            kind_feature=config.data.audio.features.kind,
-            name_features=config.data.audio.features.names,
+        kind_features = config.data.audio.features.kind
+        if kind_features == 'descriptors':
+            func_extractor = AudioDescriptorsExtractor
+        elif kind_features == 'spectrum':
+            func_extractor = AudioSpectrumExtractor
+        else:
+            raise NotImplementedError()
+        feature_extractor = func_extractor(
+            names_features=config.data.audio.features.names,
             rate_sample=config.data.audio.time.rate_sample,
             size_win=config.data.audio.time.size_win,
             stride_win=config.data.audio.time.stride_win,
@@ -98,6 +104,8 @@ if __name__ == '__main__':
                     .map(
                         lambda el: tf.transpose(el, perm=tf.roll(tf.range(tf.rank(el)), shift=-1, axis=0))
                     )
+            # pre-processing
+            ds = ds.map(lambda el: feature_extractor(el))
             # Split example between input and target
             ds_a = ds.map(lambda el: tuple(tf.unstack(tf.expand_dims(el, axis=-1), axis=-2)))
             ds_b = ds_a.map(lambda *inputs: inputs[::-1])
@@ -115,12 +123,12 @@ if __name__ == '__main__':
             .batch(config.training.size_batch) \
             .prefetch(tf.data.AUTOTUNE)
 
-        # Infer processed input shape
+        # Get pre-processed input shape
         shape_input = ds_train.element_spec[0].shape
 
         # create an instance of the model you want
-        inputs = tf.keras.Input(shape=shape_input[1:])
-        preprocessed_inputs = feature_extractor(inputs)
+        input_ = tf.keras.Input(shape=shape_input[1:])
+        # input_preprocessed = feature_extractor(input_)
         # The shapes of the codes are different for each level,
         # only the last axis is quantised, which should be the same for all levels
         vector_quantiser = VectorQuantiser(
@@ -129,19 +137,19 @@ if __name__ == '__main__':
         )
         auto_encoder = JukeboxAutoEncoder(
             vector_quantiser=vector_quantiser,
-            nb_levels=config.model.something.nb_levels,
             **vars(config.model.jukebox)
         )
         coupling_solver = CouplingSolver(
-            vector_quantiser=vector_quantiser,
-            nb_levels=config.model.something.nb_levels,
             **vars(config.model.coupling_solver)
         )
-        something = SomethingModel(vector_quantiser, auto_encoder, coupling_solver)
-        outputs = something(preprocessed_inputs)
-        model = tf.keras.Model(inputs, outputs)
+        model = SomethingModel(
+            auto_encoder,
+            coupling_solver,
+            **vars(config.model.something)
+            )
         model.compile(
             metrics=[],
+            loss=[],
             run_eagerly=config.debug.enabled
         )
         #
