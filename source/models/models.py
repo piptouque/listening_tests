@@ -21,7 +21,7 @@ class BaseConvDim(tf.keras.layers.Layer):
         self._activation = activation
         self._padding = 'same'
         #
-        self._conv = None
+        self._conv: tf.keras.layers.Layer = lambda x: None
     
     def call(self, x: tf.Tensor) -> tf.Tensor:
         return self._conv(x)
@@ -163,6 +163,9 @@ class VectorQuantiser(tf.keras.layers.Layer):
     def axes_quantisation(self) -> List[int]:
         return self._axes
 
+    @property
+    def nb_embeddings(self) -> int:
+        return self._nb_embeddings
 
     @staticmethod
     def get_quantisation_codebook_loss(z_q: tf.Tensor, z: tf.Tensor, axes: List[int]) -> tf.Tensor:
@@ -185,6 +188,20 @@ class VectorQuantiser(tf.keras.layers.Layer):
         loss_commit = cls.get_quantisation_commit_loss(z_q, z, axes=axes)
         loss_vq = tf.identity(loss_codebook + loss_commit * beta, name='loss_vq')
         return loss_vq
+
+    @staticmethod
+    def get_codebook_dissimilarity_loss(e_hat: tf.Tensor, e: tf.Tensor, nb_embeddings: int) -> tf.Tensor:
+        # get 'one-hot' representation
+        # then cosine similarity
+        return tf.identity(
+            tf.reduce_mean(
+                1 + tf.keras.losses.cosine_similarity(
+                    tf.one_hot(e_hat, depth=nb_embeddings, on_value=1.0, off_value=0.0),
+                    tf.one_hot(e, depth=nb_embeddings, on_value=1.0, off_value=0.0)
+                )
+            ),
+            name="loss_similarity_codebook"
+        )
 
 
     def quantise(self, z: tf.Tensor) -> tf.Tensor:
@@ -444,8 +461,8 @@ class JukeboxAutoEncoder(tf.keras.Model):
         size_kernel_res: int=3,
         rate_dilation_res: int=3,
     ) -> None:
-        tf.debugging.assert_equal(tf.rank(nb_blocks_sample), tf.rank(nb_blocks_res))
-        nb_levels = tf.rank(nb_blocks_sample)
+        tf.debugging.assert_equal(len(nb_blocks_sample), len(nb_blocks_res))
+        nb_levels = len(nb_blocks_sample)
         super(JukeboxAutoEncoder, self).__init__()
         self._encoders = [
             self.Encoder(
@@ -534,6 +551,10 @@ class JukeboxAutoEncoder(tf.keras.Model):
     def axes_quantisation(self) -> List[int]:
         return self._vector_quantiser.axes_quantisation
 
+    @property
+    def nb_embeddings(self) -> int:
+        return self._vector_quantiser.nb_embeddings
+
     def build(self, shape_input: Tuple[int, ...]) -> None:
         """Build stuff"""
         self._decoders = [
@@ -556,7 +577,7 @@ class JukeboxAutoEncoder(tf.keras.Model):
         qs = self.quantise(zs)
         zs_q = qs['code_quantised']
         loss_vq = self.get_quantisation_loss(zs_q, zs, self._vector_quantiser._beta, self.axes_quantisation)
-        self.add_loss(lambda: loss_vq)
+        # self.add_loss(loss_vq)
         xs_hat = self.decode(zs_q)
         return xs_hat
 
@@ -576,20 +597,29 @@ class JukeboxAutoEncoder(tf.keras.Model):
     @staticmethod
     def get_code_reconstruction_loss(zs: List[tf.Tensor], zs_hat: List[tf.Tensor]) -> tf.Tensor:
         tf.assert_equal(len(zs), len(zs_hat))
-        loss_coupling = tf.identity(
+        return tf.identity(
             tf.reduce_sum(
-                tf.stack([tf.reduce_mean(tf.square(zs[idx_level] - zs_hat[idx_level])) for idx_level in range(len(zs))], 0)), name="loss_code_reconstruction")
-        return loss_coupling
+                tf.stack([tf.reduce_mean(tf.square(zs[idx_level] - zs_hat[idx_level])) for idx_level in range(len(zs))], 0)
+            ),
+            name="loss_code_reconstruction"
+        )
+
 
     @staticmethod
     def get_quantisation_codebook_loss(zs_q: List[tf.Tensor], zs: List[tf.Tensor], axes: List[int]) -> tf.Tensor:
         return tf.reduce_sum(tf.stack([VectorQuantiser.get_quantisation_codebook_loss(zs_q[idx_level], zs[idx_level], axes=axes) for idx_level in range(len(zs))]))
+
     @staticmethod
     def get_quantisation_commit_loss(zs_q: List[tf.Tensor], zs: List[tf.Tensor], axes: List[int]) -> tf.Tensor:
         return tf.reduce_sum(tf.stack([VectorQuantiser.get_quantisation_commit_loss(zs_q[idx_level], zs[idx_level], axes=axes) for idx_level in range(len(zs))]))
+
     @staticmethod
     def get_quantisation_loss(zs_q: List[tf.Tensor], zs: List[tf.Tensor], beta: float, axes: List[int]) -> tf.Tensor:
         return tf.reduce_sum(tf.stack([VectorQuantiser.get_quantisation_loss(zs_q[idx_level], zs[idx_level], beta, axes=axes) for idx_level in range(len(zs))]))
+
+    @staticmethod
+    def get_codebook_dissimilarity_loss(es_hat: List[tf.Tensor], es: List[tf.Tensor], nb_embeddings: int) -> tf.Tensor:
+        return tf.reduce_sum(tf.stack([VectorQuantiser.get_codebook_dissimilarity_loss(es_hat[idx_level], es[idx_level], nb_embeddings) for idx_level in range(len(es))]))
 
 class CouplingTranscoder(tf.keras.Model):
     """Coupling solver"""
@@ -660,7 +690,7 @@ class SomethingModel(tf.keras.Model):
     def __init__(self,
         auto_encoder: JukeboxAutoEncoder,
         coupling_solver: CouplingSolver,
-        gamma_coupling: float,
+        gamma_reconstruction: float,
         gamma_quantisation_codebook: float,
         gamma_quantisation_commit: float
     ) -> None:
@@ -669,80 +699,78 @@ class SomethingModel(tf.keras.Model):
         self._coupling_solver = coupling_solver
         #
         self._vector_quantiser = auto_encoder._vector_quantiser
-        self._gamma_coupling = gamma_coupling
+        self._gamma_reconstruction = gamma_reconstruction
         self._gamma_quantisation_codebook = gamma_quantisation_codebook
         self._gamma_quantisation_commit = gamma_quantisation_commit
         #
-        self.tracker_loss_reconstruction = tf.keras.metrics.Mean(name='loss_reconstruction')
         self.tracker_loss_coupling = tf.keras.metrics.Mean(name='loss_coupling')
+        self.tracker_loss_reconstruction = tf.keras.metrics.Mean(name='loss_reconstruction')
         self.tracker_loss_quantisation_codebook = tf.keras.metrics.Mean(name='loss_quantisation_codebook')
         self.tracker_loss_quantisation_commit = tf.keras.metrics.Mean(name='loss_quantisation_commit')
+        
+        self.cache_losses = {
+            'reconstruction': None,
+            'quantisation_codebook': None,
+            'quantisation_commit': None
+        }
 
     def build(self, shape_input: Tuple[int, ...]) -> None:
-        # vectr_quantiser is built by the other sub-models.
         self._auto_encoder.build(shape_input)
-        shapes_code = self._auto_encoder.get_code_shapes(shape_input)
         super(SomethingModel, self).build(shape_input)
-    
+
     def call(self, x_a: tf.Tensor) -> tf.Tensor:
         zs_a = self._auto_encoder.encode(x_a)
-        zs_dict_vq_a = self._auto_encoder.quantise(zs_a)
-        es_a = zs_dict_vq_a['ids_codebook']
+        qs_a = self._auto_encoder.quantise(zs_a)
+        es_a = qs_a['ids_codebook']
         #
-        es_b = self._coupling_solver(es_a)
-        zs_q_b = self._auto_encoder.lookup_code(es_b)
-        xs_b_hat = self._auto_encoder.decode(zs_q_b)
+        es_b_hat = self._coupling_solver(es_a)
+        zs_q_b_hat = self._auto_encoder.lookup_code(es_b_hat)
+        xs_b_hat = self._auto_encoder.decode(zs_q_b_hat)
         #
-        return xs_b_hat
-
-    def reset_metrics(self):
-        self.tracker_loss_reconstruction.reset_states()
-        self.tracker_loss_coupling.reset_states()
-        self.tracker_loss_quantisation_codebook.reset_states()
-        self.tracker_loss_quantisation_commit.reset_states()
-
-    @property
-    def metrics(self):
-        return [
-            self.tracker_loss_reconstruction,
-            self.tracker_loss_coupling,
-            self.tracker_loss_quantisation_codebook,
-            self.tracker_loss_quantisation_commit
-        ]
+        ## LOSSES
+        zs_q_a = qs_a['code_quantised']
+        xs_a_hat = self._auto_encoder.decode(zs_q_a)
+        loss_reconstruction_a = JukeboxAutoEncoder.get_reconstruction_loss(x_a, xs_a_hat)
+        loss_quantisation_codebook = JukeboxAutoEncoder.get_quantisation_codebook_loss(zs_q_a, zs_a, self._auto_encoder.axes_quantisation)
+        loss_quantisation_commit = JukeboxAutoEncoder.get_quantisation_commit_loss(zs_q_a, zs_a, self._auto_encoder.axes_quantisation)
+        #
+        self.cache_losses['reconstruction'] = loss_reconstruction_a
+        self.cache_losses['quantisation_codebook'] = loss_quantisation_codebook
+        self.cache_losses['quantisation_commit'] = loss_quantisation_commit
+        #
+        # Can't use metrics.Mean object for gradient computation!!
+        self.tracker_loss_reconstruction.update_state(loss_reconstruction_a)
+        self.tracker_loss_quantisation_codebook.update_state(loss_quantisation_codebook)
+        self.tracker_loss_quantisation_commit.update_state(loss_quantisation_commit)
+        return [xs_b_hat, zs_q_b_hat, es_b_hat]
 
     def train_step(self, data: Tuple[tf.Tensor, tf.Tensor]) -> Dict[str, tf.Tensor]:
         x_a, x_b = data
 
         with tf.GradientTape() as tape:
-            zs_a = self._auto_encoder.encode(x_a)
-            zs_dict_vq_a = self._auto_encoder.quantise(zs_a)
-            es_a = zs_dict_vq_a['ids_codebook']
+            xs_b_hat, zs_q_b_hat, es_b_hat = self(x_a)
             #
-            es_b = self._coupling_solver(es_a)
-            zs_q_b_hat = self._auto_encoder.lookup_code(es_b)
-            xs_b_hat = self._auto_encoder.decode(zs_q_b_hat)
+            # Coupling loss!
+            with tape.stop_recording():
+                # don't apply gradient on this encoding
+                # it's taken care of elsewhere.
+                zs_b = self._auto_encoder.encode(x_b)
+                qs_b = self._auto_encoder.quantise(zs_b)
+            es_b = qs_b['ids_codebook']
+            loss_coupling_b = JukeboxAutoEncoder.get_codebook_dissimilarity_loss(es_b_hat, es_b, self._auto_encoder.nb_embeddings)
             #
-            zs_q_a = zs_dict_vq_a['code_quantised']
-            xs_a_hat = self._auto_encoder.decode(zs_q_a)
-            loss_reconstruct_a = JukeboxAutoEncoder.get_reconstruction_loss(x_a, xs_a_hat)
+            self.tracker_loss_coupling.update_state(loss_coupling_b)
             #
-            loss_quantisation_codebook = JukeboxAutoEncoder.get_quantisation_codebook_loss(zs_q_a, zs_a, self._auto_encoder.axes_quantisation)
-            loss_quantisation_commit = JukeboxAutoEncoder.get_quantisation_commit_loss(zs_q_a, zs_a, self._auto_encoder.axes_quantisation)
-            #
-            # don't apply gradient on this encoding
-            # it's taken care of elsewhere.
-            zs_b = self._auto_encoder.encode(tf.stop_gradient(x_b))
-            loss_coupling_b = JukeboxAutoEncoder.get_code_reconstruction_loss(zs_b, zs_q_b_hat)
-            #
-            loss = loss_reconstruct_a + \
-                self._gamma_coupling * loss_coupling_b + \
+            loss_reconstruction_a = self.cache_losses['reconstruction']
+            loss_quantisation_codebook = self.cache_losses['quantisation_codebook']
+            loss_quantisation_commit = self.cache_losses['quantisation_commit']
+            # self.add_loss(self._gamma_reconstruction * loss_reconstruction_a)
+            # self.add_loss(self._gamma_quantisation_codebook * loss_quantisation_codebook)
+            # self.add_loss(self._gamma_quantisation_commit * loss_quantisation_commit)
+            loss = loss_coupling_b + \
+                self._gamma_reconstruction * loss_reconstruction_a + \
                 self._gamma_quantisation_codebook * loss_quantisation_codebook + \
                 self._gamma_quantisation_commit * loss_quantisation_commit
-            #
-            self.tracker_loss_reconstruction.update_state(loss_reconstruct_a)
-            self.tracker_loss_coupling.update_state(loss_coupling_b)
-            self.tracker_loss_quantisation_codebook.update_state(loss_quantisation_codebook)
-            self.tracker_loss_quantisation_commit.update_state(loss_quantisation_commit)
         
         # compute gradients
         trainable_vars = self.trainable_variables
@@ -750,9 +778,26 @@ class SomethingModel(tf.keras.Model):
 
         # Update weights
         self.optimizer.apply_gradients(zip(gradients, trainable_vars))
+        # Reset stored losses
+        for key in self.cache_losses.keys():
+            self.cache_losses[key] = None
 
         # Update metrics
         self.compiled_metrics.update_state(x_b, xs_b_hat)
         # Compute our own metrics
         return { m.name: m.result() for m in self.metrics }
     
+    def reset_metrics(self):
+        self.tracker_loss_coupling.reset_states()
+        self.tracker_loss_reconstruction.reset_states()
+        self.tracker_loss_quantisation_codebook.reset_states()
+        self.tracker_loss_quantisation_commit.reset_states()
+
+    @property
+    def metrics(self):
+        return [
+            self.tracker_loss_coupling,
+            self.tracker_loss_reconstruction,
+            self.tracker_loss_quantisation_codebook,
+            self.tracker_loss_quantisation_commit
+        ]

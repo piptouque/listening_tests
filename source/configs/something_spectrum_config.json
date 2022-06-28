@@ -15,7 +15,7 @@
             "features": {
                 "kind": "spectrum",
                 "names": [
-                    "mfcc"
+                    "melspec"
                 ]
             }
         }
@@ -40,7 +40,7 @@
             "att_nb_heads": 3 
         },
         "something": {
-            "gamma_coupling": 0.99,
+            "gamma_reconstruction": 0.99,
             "gamma_quantisation_codebook": 0.99,
             "gamma_quantisation_commit": 0.99
         }

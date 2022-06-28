@@ -47,7 +47,7 @@ class AudioFeatureExtractor(tf.keras.layers.Layer):
             'stride_win': self._stride_win,
             'freq_min': self._freq_min,
             'freq_max': self._freq_max,
-            'nb_mfcc': self._nb_freqs_mel
+            'nb_freqs_mel': self._nb_freqs_mel
         }) 
 
 
@@ -120,10 +120,9 @@ class AudioFeatureExtractor(tf.keras.layers.Layer):
         )
         x_spec_mel = tf.tensordot(tf.abs(x_stft), m_mel, axes=1)
         x_spec_mel.set_shape(x_stft.shape[:-1].concatenate(m_mel.shape[-1:]))
-        x_mfcc = tf.signal.mfccs_from_log_mel_spectrograms(
-            tf.math.log(x_spec_mel + 1e-6)
-        )
-        x_features = x_mfcc
+        # x_mfcc = tf.signal.mfccs_from_log_mel_spectrograms(tf.math.log(x_spec_mel + 1e-6))
+        # x_features = x_mfcc
+        x_features = x_spec_mel
         # inverse permutation: from [channel, batch,..., feature, time] to [batch,..., time, feature, channel]
         perm_inv = tf.roll(tf.range(tf.rank(x_features)), shift=-1, axis=0)
         x_features = tf.transpose(x_features, perm=perm_inv)
