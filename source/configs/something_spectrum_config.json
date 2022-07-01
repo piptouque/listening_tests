@@ -22,7 +22,7 @@
     },
     "model": {
         "vector_quantiser": {
-            "nb_embeddings": 256,
+            "nb_embeddings": 32,
             "beta": 0.99
         },
         "jukebox": {
@@ -35,9 +35,10 @@
             "rate_dilation_res": 3
         },
         "coupling_solver": {
-            "conv_nb_filters": 2,
-            "conv_size_kernel": 2,
-            "att_nb_heads": 3 
+            "nb_blocks": 3,
+            "size_model": 64,
+            "size_feedforward": 16,
+            "nb_heads": 8
         },
         "something": {
             "gamma_reconstruction": 0.99,

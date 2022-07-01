@@ -1,16 +1,17 @@
-from typing import Tuple
 import os
 import sys
 
 import tensorflow as tf
 import tensorflow_datasets as tfds
 
-from models.models import SomethingModel, JukeboxAutoEncoder, CouplingSolver, VectorQuantiser
+from models.common import VectorQuantiser
+from models.models import SomethingModel, JukeboxAutoEncoder, CouplingSolver
 from models.preprocessing import AudioDescriptorsExtractor, AudioSpectrumExtractor
 from utils.dirs import create_dirs
 from utils.config import process_config
 from utils.utils import get_args
 
+# pylint: disable=unused-import
 import datasets.canonne_duos.canonne_duos
 
 
@@ -66,12 +67,12 @@ if __name__ == '__main__':
         
         kind_features = config.data.audio.features.kind
         if kind_features == 'descriptors':
-            func_extractor = AudioDescriptorsExtractor
+            Extractor = AudioDescriptorsExtractor
         elif kind_features == 'spectrum':
-            func_extractor = AudioSpectrumExtractor
+            Extractor = AudioSpectrumExtractor
         else:
             raise NotImplementedError()
-        feature_extractor = func_extractor(
+        feature_extractor = Extractor(
             names_features=config.data.audio.features.names,
             rate_sample=config.data.audio.time.rate_sample,
             size_win=config.data.audio.time.size_win,
@@ -140,6 +141,7 @@ if __name__ == '__main__':
             **vars(config.model.jukebox)
         )
         coupling_solver = CouplingSolver(
+            vector_quantiser=vector_quantiser,
             **vars(config.model.coupling_solver)
         )
         model = SomethingModel(
