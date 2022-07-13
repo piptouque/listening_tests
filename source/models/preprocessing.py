@@ -8,18 +8,20 @@ import tensorflow_io as tfio
 
 import librosa
 
+
 class AudioFeatureExtractor(tf.keras.layers.Layer):
     """Simple audio feature extractor"""
+
     def __init__(self,
-        names_features: List[str],
-        rate_sample: int,
-        size_win: int,
-        stride_win: int,
-        freq_min: float,
-        freq_max: float,
-        nb_freqs_mel: int,
-    ) -> None:
-        super(AudioFeatureExtractor, self).__init__() 
+                 names_features: List[str],
+                 rate_sample: int,
+                 size_win: int,
+                 stride_win: int,
+                 freq_min: float,
+                 freq_max: float,
+                 nb_freqs_mel: int,
+                 ) -> None:
+        super(AudioFeatureExtractor, self).__init__()
 
         self._rate_sample = rate_sample
         self._size_win = size_win
@@ -37,7 +39,6 @@ class AudioFeatureExtractor(tf.keras.layers.Layer):
         x_features = tf.ensure_shape(x_features, shape=output_shape)
         return x_features
 
-
     def get_config(self) -> Dict[str, Any]:
         config = super(AudioFeatureExtractor, self).get_config()
         config.update({
@@ -48,13 +49,12 @@ class AudioFeatureExtractor(tf.keras.layers.Layer):
             'freq_min': self._freq_min,
             'freq_max': self._freq_max,
             'nb_freqs_mel': self._nb_freqs_mel
-        }) 
-
+        })
 
     @abstractmethod
     def _extract_features(self, x_audio: tf.Tensor) -> tf.Tensor:
         return NotImplemented
-    
+
     @abstractmethod
     def compute_output_shape(self, shape_input: tf.TensorShape) -> tf.TensorShape:
         return NotImplemented
@@ -91,7 +91,8 @@ class AudioFeatureExtractor(tf.keras.layers.Layer):
         # from [channel, batch, ..., feature, time] to [batch, ..., feature, time, channel]
         for idx, feat in enumerate(x_features):
             perm_inv = tf.range(tf.rank(feat))
-            perm_inv = tf.concat([perm_inv[:-2], [perm_inv[-1]], [perm_inv[-2]]], 0)
+            perm_inv = tf.concat(
+                [perm_inv[:-2], [perm_inv[-1]], [perm_inv[-2]]], 0)
             perm_inv = tf.roll(perm_inv, shift=-1, axis=0)
             x_features[idx] = tf.transpose(feat, perm=perm_inv)
         return dict(zip(_NAMES_FEATURES, x_features))
@@ -106,11 +107,11 @@ class AudioFeatureExtractor(tf.keras.layers.Layer):
         x_audio_trans = tf.transpose(x_audio, perm=perm)
         nb_freqs_fft = self._size_win
         x_stft = tf.signal.stft(x_audio_trans,
-            frame_length=self._size_win,
-            frame_step=self._stride_win,
-            fft_length=nb_freqs_fft,
-            pad_end=True
-        )
+                                frame_length=self._size_win,
+                                frame_step=self._stride_win,
+                                fft_length=nb_freqs_fft,
+                                pad_end=True
+                                )
         m_mel = tf.signal.linear_to_mel_weight_matrix(
             num_mel_bins=self._nb_freqs_mel,
             num_spectrogram_bins=x_stft.shape[-1],
@@ -127,7 +128,6 @@ class AudioFeatureExtractor(tf.keras.layers.Layer):
         perm_inv = tf.roll(tf.range(tf.rank(x_features)), shift=-1, axis=0)
         x_features = tf.transpose(x_features, perm=perm_inv)
         return dict(zip(self._names_features, [x_features]))
-
 
     @staticmethod
     def _compute_audio_descriptors_numpy(
@@ -189,7 +189,6 @@ class AudioFeatureExtractor(tf.keras.layers.Layer):
         ).astype(x_audio.dtype)
         x_flatness = np.squeeze(x_flatness, axis=-2)
 
-        
         x_centroid = librosa.feature.spectral_centroid(
             S=np.abs(x_spec)
         ).astype(x_audio.dtype)
@@ -204,8 +203,10 @@ class AudioFeatureExtractor(tf.keras.layers.Layer):
             x_centroid
         ]
 
+
 class AudioSpectrumExtractor(AudioFeatureExtractor):
     """For spectrum only"""
+
     def _extract_features(self, x_audio: tf.Tensor) -> tf.Tensor:
         """Compute feature tensor"""
         tf.assert_equal(len(self._names_features), 1)
@@ -229,12 +230,14 @@ class AudioSpectrumExtractor(AudioFeatureExtractor):
 
 class AudioDescriptorsExtractor(AudioFeatureExtractor):
     """For descriptors only"""
+
     def _extract_features(self,
-        x_audio: tf.Tensor,
-    ) -> tf.Tensor:
+                          x_audio: tf.Tensor,
+                          ) -> tf.Tensor:
         """Compute feature tensor"""
         x_features = self._compute_audio_descriptors(x_audio)
-        x_features = [x_features[name_feature_used] for name_feature_used in self._names_features]
+        x_features = [x_features[name_feature_used]
+                      for name_feature_used in self._names_features]
         # All features should have the same shape
         # That way, they can be stacked in a new tensor.
         x_features = tf.stack(x_features, axis=-2)
@@ -245,6 +248,7 @@ class AudioDescriptorsExtractor(AudioFeatureExtractor):
     def compute_output_shape(self, shape_input: tf.TensorShape) -> tf.TensorShape:
         """Compute here so we don't loose the shape info due to preprocessing. 
         """
+        # FIXME
         tf.assert_equal(shape_input[-1], 1)
         shape_output = np.asarray(shape_input.as_list())
         # change (downsample) time dimension.

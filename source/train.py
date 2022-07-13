@@ -34,17 +34,21 @@ if __name__ == '__main__':
         print("no gpu manager available - will use all available GPUs", file=sys.stderr)
     except gpl.NoGpuAvailable:
         # there is no GPU available for locking, continue with CPU
-        comp_device = "/cpu:0" 
-        os.environ["CUDA_VISIBLE_DEVICES"]=""
+        comp_device = "/cpu:0"
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
     if "CUDA_VISIBLE_DEVICES" in os.environ and len(os.environ["CUDA_VISIBLE_DEVICES"]) > 0:
         devices = tf.config.list_physical_devices('GPU')
-        print(len(devices))
-        tf.config.experimental.set_memory_growth(device=devices[0], enable=True)
+        tf.config.experimental.set_memory_growth(
+            device=devices[0], enable=True)
     else:
         comp_device = "/cpu:0"
 
     with tf.device(comp_device):
+
+        tf.config.run_functions_eagerly(config.debug.eager)
+        if config.debug.eager:
+            tf.data.experimental.enable_debug_mode()
 
         split = [
             tfds.core.ReadInstruction(
@@ -62,9 +66,9 @@ if __name__ == '__main__':
             config.dataset.name,
             split=split,
             data_dir=config.dataset.path,
-            download=True
+            download=False
         )
-        
+
         kind_features = config.data.audio.features.kind
         if kind_features == 'descriptors':
             Extractor = AudioDescriptorsExtractor
@@ -82,6 +86,7 @@ if __name__ == '__main__':
             nb_freqs_mel=config.data.audio.freq.nb_freqs_mel
         )
 
+        @tf.function
         def prep_ds(ds: tf.data.Dataset):
             """Reshaping the dataset before pre-processing.
 
@@ -103,12 +108,14 @@ if __name__ == '__main__':
                 ds = ds \
                     .batch(2, drop_remainder=True) \
                     .map(
-                        lambda el: tf.transpose(el, perm=tf.roll(tf.range(tf.rank(el)), shift=-1, axis=0))
+                        lambda el: tf.transpose(el, perm=tf.roll(
+                            tf.range(tf.rank(el)), shift=-1, axis=0))
                     )
             # pre-processing
-            ds = ds.map(lambda el: feature_extractor(el))
+            ds = ds.map(feature_extractor)
             # Split example between input and target
-            ds_a = ds.map(lambda el: tuple(tf.unstack(tf.expand_dims(el, axis=-1), axis=-2)))
+            ds_a = ds.map(lambda el: tuple(tf.unstack(
+                tf.expand_dims(el, axis=-1), axis=-2)))
             ds_b = ds_a.map(lambda *inputs: inputs[::-1])
             ds = ds_a.concatenate(ds_b)
             return ds
@@ -148,12 +155,8 @@ if __name__ == '__main__':
             auto_encoder,
             coupling_solver,
             **vars(config.model.something)
-            )
-        model.compile(
-            metrics=[],
-            loss=[],
-            run_eagerly=config.debug.enabled
         )
+        model.compile(metrics=[], loss=[], run_eagerly=config.debug.eager)
         #
         model.build(shape_input)
         model.summary(expand_nested=False)
@@ -164,7 +167,8 @@ if __name__ == '__main__':
             **vars(config.save.log)
         )
         cb_checkpoint = tf.keras.callbacks.ModelCheckpoint(
-            filepath=os.path.join(config.save.path.checkpoint_dir, 'best_{epoch:02d}.tf'),
+            filepath=os.path.join(
+                config.save.path.checkpoint_dir, 'best_{epoch:02d}.tf'),
             save_best_only=True,
             save_weights_only=True,
             monitor='val_loss',

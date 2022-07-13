@@ -26,8 +26,14 @@
             "beta": 0.99
         },
         "jukebox": {
-            "nb_blocks_sample": [3, 5],
-            "nb_blocks_res": [4, 2],
+            "nb_blocks_sample": [
+                3,
+                5
+            ],
+            "nb_blocks_res": [
+                4,
+                2
+            ],
             "nb_filters": 8,
             "size_kernel_sample": 4,
             "stride_sample": 2,
@@ -46,8 +52,7 @@
             "gamma_quantisation_commit": 0.99
         }
     },
-    "loss": {
-    },
+    "loss": {},
     "training": {
         "rate_learning": 0.02,
         "size_batch": 128,
@@ -67,6 +72,6 @@
         }
     },
     "debug": {
-        "enabled": true
+        "eager": true
     }
 }

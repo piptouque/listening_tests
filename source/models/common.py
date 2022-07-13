@@ -1,4 +1,4 @@
-from typing import Union, Optional
+from typing import Optional
 
 import tensorflow as tf
 
@@ -170,7 +170,7 @@ class VectorQuantiser(tf.keras.layers.Layer):
         return self._nb_embeddings
 
     @staticmethod
-    def get_quantisation_codebook_loss(z_q: tf.Tensor, z: tf.Tensor, axes: list[int]) -> tf.Tensor:
+    def quantisation_codebook_loss(z_q: tf.Tensor, z: tf.Tensor, axes: list[int]) -> tf.Tensor:
         # fix: tf.norm does not interpret 1-uples as integers.
         axes = axes[0] if len(axes) == 1 else axes
         loss_codebook = tf.identity(
@@ -178,7 +178,7 @@ class VectorQuantiser(tf.keras.layers.Layer):
         return loss_codebook
 
     @staticmethod
-    def get_quantisation_commit_loss(z_q: tf.Tensor, z: tf.Tensor, axes: list[int]) -> tf.Tensor:
+    def quantisation_commit_loss(z_q: tf.Tensor, z: tf.Tensor, axes: list[int]) -> tf.Tensor:
         # fix: tf.norm does not interpret 1-uples as integers.
         axes = axes[0] if len(axes) == 1 else axes
         loss_commit = tf.identity(
@@ -186,16 +186,16 @@ class VectorQuantiser(tf.keras.layers.Layer):
         return loss_commit
 
     @classmethod
-    def get_quantisation_loss(cls, z_q: tf.Tensor, z: tf.Tensor, beta: float, axes: list[int]) -> tf.Tensor:
+    def quantisation_loss(cls, z_q: tf.Tensor, z: tf.Tensor, beta: float, axes: list[int]) -> tf.Tensor:
         # fix: tf.norm does not interpret 1-uples as integers.
-        loss_codebook = cls.get_quantisation_codebook_loss(z_q, z, axes=axes)
-        loss_commit = cls.get_quantisation_commit_loss(z_q, z, axes=axes)
+        loss_codebook = cls.quantisation_codebook_loss(z_q, z, axes=axes)
+        loss_commit = cls.quantisation_commit_loss(z_q, z, axes=axes)
         loss_vq = tf.identity(
             loss_codebook + loss_commit * beta, name='loss_vq')
         return loss_vq
 
     @staticmethod
-    def get_codebook_dissimilarity_loss(e_hat: tf.Tensor, e: tf.Tensor, nb_embeddings: int) -> tf.Tensor:
+    def codebook_dissimilarity_loss(e_hat: tf.Tensor, e: tf.Tensor, nb_embeddings: int) -> tf.Tensor:
         # get 'one-hot' representation
         # then cosine similarity
         return tf.identity(
@@ -212,7 +212,7 @@ class VectorQuantiser(tf.keras.layers.Layer):
         """_summary_
 
         Args:
-            z (tf.Tensor): dim -> (batch, not quantised dim (time), quantised dim (channel)) 
+    z (tf.Tensor): dim -> (batch, not quantised dim (time), quantised dim (channel))
 
         Returns:
             tf.Tensor: _description_
@@ -220,18 +220,18 @@ class VectorQuantiser(tf.keras.layers.Layer):
         # tf.debugging.assert_equal(tf.shape(z_e)[1:], self._shape_code[1:])
         # dim -> (batch, not quantised dim, nb_embeddings)
         dot_z_embedding = tf.tensordot(z, self._vecs_embedding, axes=[
-                                       self._axes, self._axes_embedding])
+            self._axes, self._axes_embedding])
         norm_sq_z = tf.reduce_sum(tf.square(z), axis=self._axes)
         # dim -> (batch, not quantised dim, 1)
         norm_sq_embedding = tf.reduce_sum(
             tf.square(self._vecs_embedding), axis=self._axes_embedding)
-        # add one dim to make it broadcast implicitly
-        # dim -> (batch, not quantised dim, 1)
+        # Some brodcast operations
         norm_sq_z = tf.expand_dims(norm_sq_z, axis=-1)
+        # DOT NOT CHANGE ORDER OF OPERATIONS
+        # dim -> (batch, not quantised dim, nb_embeddings)
         # Euclidean distance as: dist(x,y) = norm(x)^2 + norm(y)^2  - 2<x,y>
-        # Uses implicit broadcasts repeatedly, beware the order of operations.
-        dist_quantisation = (- 2 * dot_z_embedding +
-                             norm_sq_z) + norm_sq_embedding
+        dist_quantisation = norm_sq_z + \
+            (- 2 * dot_z_embedding + norm_sq_embedding)
         e = tf.argmin(dist_quantisation, axis=-1)
         z_q = self.lookup_code(e)
         # similarity as normalised dot product of latent and embedding vectors
@@ -249,7 +249,7 @@ class VectorQuantiser(tf.keras.layers.Layer):
             # initializer=lambda: tf.random.uniform(shape=self._shape_embedding),
             trainable=True,
             name="codebook"
-        ) 
+        )
         super(VectorQuantiser, self).build(shape_input)
 
     def call(self, z: tf.Tensor) -> tf.Tensor:
@@ -261,9 +261,9 @@ class VectorQuantiser(tf.keras.layers.Layer):
         Returns:
             tf.Tensor: _description_
         """
-        _, z_q, _ = self.quantise(z)
+        e, z_q, sim = self.quantise(z)
         # not here
-        loss_vq = self.get_quantisation_loss(
+        loss_vq = self.quantisation_loss(
             z_q, z, self._beta, self._axes)
         self.add_loss(loss_vq)
-        return q
+        return e, z_q, sim

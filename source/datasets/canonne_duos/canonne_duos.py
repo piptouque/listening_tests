@@ -2,7 +2,7 @@
 
 from pathlib import Path
 import re
-from typing import Callable, Union, List
+from typing import Callable, List
 
 import librosa
 import pandas as pd
@@ -48,7 +48,7 @@ _NB_CHANNELS = 2
 _RATE_AUDIO = 48000
 # Wanted length (in seconds) for a single example.
 # Will be increased to the next power of two.
-_LENGTH_BLOCK_DESIRED = 2 
+_LENGTH_BLOCK_DESIRED = 2
 # better to have a power of two.
 _SIZE_BLOCK = int(2 ** np.ceil(np.log2(_RATE_AUDIO * _LENGTH_BLOCK_DESIRED)))
 _DTYPE_AUDIO = tf.float32
@@ -96,7 +96,10 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
     # pytype: disable=wrong-keyword-args
     BUILDER_CONFIGS = [
         CanonneDuosConfig(
-            name='joined', description='Tracks from the same take and duo are joined in a single example', kind_split='joined')
+            name='joined',
+            description='Tracks from the same take and duo are joined in a single example',
+            kind_split='joined'
+        )
     ]
     # pytype: enable=wrong-keyword-args
 

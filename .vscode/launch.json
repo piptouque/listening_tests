@@ -36,21 +36,5 @@
                 "/data/anasynth_nonbp/thiel/tensorflow_datasets/"
             ]
         },
-        {
-            "name": "Something (test): Train",
-            "type": "python",
-            "request": "launch",
-            "program": "${workspaceFolder}/source/train.py",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "args": [
-                "--config",
-                "${workspaceFolder}/source/configs/something_test_config.json",
-                "--save_root",
-                "/data/anasynth_nonbp/thiel/saved_models/listening_tests/",
-                "--dataset",
-                "/data/anasynth_nonbp/thiel/tensorflow_datasets/"
-            ]
-        },
     ]
 }

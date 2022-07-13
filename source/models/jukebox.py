@@ -3,19 +3,20 @@ import tensorflow as tf
 
 from models.common import VectorQuantiser, ConvDim, ConvDimTranspose
 
+
 class JukeboxAutoEncoder(tf.keras.Model):
     """Jukebox model"""
 
     def __init__(self,
                  vector_quantiser: VectorQuantiser,
                  *,
-                 nb_filters: int=32,
-                 nb_blocks_sample: tuple[int, ...]=(3, 5, 7),
-                 size_kernel_sample: int=4,
-                 stride_sample: int=2,
-                 nb_blocks_res: tuple[int, ...]=(8, 4, 4),
-                 size_kernel_res: int=3,
-                 rate_dilation_res: int=3,
+                 nb_filters: int = 32,
+                 nb_blocks_sample: tuple[int, ...] = (3, 5, 7),
+                 size_kernel_sample: int = 4,
+                 stride_sample: int = 2,
+                 nb_blocks_res: tuple[int, ...] = (8, 4, 4),
+                 size_kernel_res: int = 3,
+                 rate_dilation_res: int = 3,
                  ) -> None:
         tf.debugging.assert_equal(len(nb_blocks_sample), len(nb_blocks_res))
         nb_levels = len(nb_blocks_sample)
@@ -30,7 +31,7 @@ class JukeboxAutoEncoder(tf.keras.Model):
                 size_kernel_res=size_kernel_res,
                 rate_dilation_res=rate_dilation_res
             )
-            for idx_level in tf.range(nb_levels)
+            for idx_level in range(nb_levels)
         ]
         self._fn_decoder = lambda nb_channels_output, i: self.Decoder(
             nb_channels_output=nb_channels_output,
@@ -67,59 +68,37 @@ class JukeboxAutoEncoder(tf.keras.Model):
             shape_code[-1] == shapes_code[0][-1] for shape_code in shapes_code), shapes_code)
         return shapes_code
 
-    @tf.function
-    def decode(self, zs: tf.TensorArray) -> tf.TensorArray:
+    def decode(self, zs: list[tf.Tensor]) -> list[tf.Tensor]:
         """Decode the multi-level latent codes zs.
 
         Args:
-            zs (tf.Tensor): 3-D tensor or 4-D tensor
-
-        Returns:
-            tf.TensorArray: list of 3-D or 4-D tensors.
+            zs (tf.Tensor): 3-D tensor or 4-D tensor Returns:
+            list[tf.Tensor]: list of 3-D or 4-D tensors.
         """
-        xs_hat = tf.TensorArray(zs.dtype, size=zs.size(), infer_shape=True)
-        for idx_level, decoder in enumerate(self._decoders):
-            xs_hat = xs_hat.write(idx_level, decoder(zs.read(idx_level)))
-        return xs_hat
+        return [decoder(zs[idx_level]) for idx_level, decoder in enumerate(self._decoders)]
 
-    @tf.function
-    def quantise(self, zs: tf.TensorArray) -> tuple[tf.TensorArray, tf.TensorArray, tf.TensorArray]:
+    def quantise(self, zs: list[tf.Tensor]) -> tuple[list[tf.Tensor], list[tf.Tensor], list[tf.Tensor]]:
         """_summary_
 
         Args:
-            zs (t 3-D tensor or 4-D tensor
+            zs (list[tf.Tensor]): _description_
 
         Returns:
-            tf.TensorArray: List of 3-D or 4-D tensors.
-
-        Returns:
-            dict[str, tf.TensorArray]: The quantise output tensor for each key.
+            tuple[list[tf.Tensor], list[tf.Tensor], list[tf.Tensor]]: (ids, quantised, similarity). Lists of 3-D or 4-D tensors.
         """
-        # _make_arr = lambda: tf.TensorArray(zs.dtype, size=zs.size(), infer_shape=False)
-        idx_level = 0
-        z = zs.read(idx_level)
-        e, z_q, sim = self._vector_quantiser.quantise(z)
-        #
-        es = tf.TensorArray(e.dtype, size=zs.size(), infer_shape=False)
-        zs_q = tf.TensorArray(z.dtype, size=zs.size(), infer_shape=False)
-        sims = tf.TensorArray(sim.dtype, size=zs.size(), infer_shape=False)
-        #
-        es = es.write(idx_level, e)
-        zs_q = zs_q.write(idx_level, z_q)
-        sims = sims.write(idx_level, sim)
-        for idx_level in tf.range(1, zs.size()):
-            es = es.write(idx_level, e)
-            zs_q = zs_q.write(idx_level, z_q)
-            sims = sims.write(idx_level, sim)
-        return es, zs_q, sims
+        # qs_tuple = [(z, z, z) for z in zs]
+        qs_tuple = [self._vector_quantiser.quantise(z) for z in zs]
+        qs = tuple([
+            [
+                qs_tuple[idx_level][idx_arg]
+                for idx_level in range(len(zs))
+            ]
+            for idx_arg in range(len(qs_tuple[0]))
+        ])
+        return qs
 
-    @tf.function
-    def lookup_code(self, es: tf.TensorArray) -> tf.TensorArray:
-        zs_q = tf.TensorArray(es.dtype, size=es.size(), infer_shape=False)
-        for idx_level in tf.range(es.size()):
-            zs_q = zs_q.write(
-                idx_level, self._vector_quantiser.lookup_code(es.read(idx_level)))
-        return zs_q
+    def lookup_code(self, es: list[tf.Tensor]) -> list[tf.Tensor]:
+        return [self._vector_quantiser.lookup_code(e) for e in es]
 
     @property
     def axes_quantisation(self) -> list[int]:
@@ -133,13 +112,13 @@ class JukeboxAutoEncoder(tf.keras.Model):
         """Build stuff"""
         self._decoders = [
             self._fn_decoder(shape_input[-1], idx_level)
-            for idx_level in tf.range(len(self._encoders))
+            for idx_level in range(len(self._encoders))
         ]
         shapes_code = self.get_code_shapes(shape_input)
         self._vector_quantiser.build(shapes_code[0])
         super(JukeboxAutoEncoder, self).build(shape_input)
 
-    def call(self, x: tf.Tensor) -> tf.TensorArray:
+    def call(self, x: tf.Tensor) -> list[tf.Tensor]:
         """Process input
         Returns auto-encoding of input
         """
@@ -148,93 +127,88 @@ class JukeboxAutoEncoder(tf.keras.Model):
         # this loss becomes out of scope.
         # we don't add quantisation loss either.
         zs = self.encode(x)
-        es, zs_q, sims = self.quantise(zs)
-        print(type(zs))
-        print(type(zs_q))
-        # loss_vq = self.get_quantisation_loss( zs_q, zs, self._vector_quantiser._beta, self.axes_quantisation)
-        # self.add_loss(loss_vq)
+        _, zs_q, _ = self.quantise(zs)
+        # FIXME: not tested with reduce_sum
+        # loss_vq = self.quantisation_loss(zs_q, zs, self._vector_quantiser._beta, self.axes_quantisation)
+        # self.add_loss(tf.reduce_sum(tf.stack([tf.reduce_mean(l) for l in loss_vq], 0), 0))
         xs_hat = self.decode(zs_q)
         return xs_hat
 
     @staticmethod
-    def _apply_loss_vec(fn: Callable[[tf.Tensor, tf.Tensor], tf.Tensor], ys: tf.TensorArray, ys_truth: tf.TensorArray) -> tf.Tensor:
-        tf.assert_equal(ys.size(), ys_truth.size())
-        return tf.reduce_sum(tf.stack([fn(ys.read(idx_level), ys_truth.read(idx_level)) for idx_level in tf.range(ys.size())], 0), 0)
+    def _apply_loss_vec(
+        fn: Callable[[tf.Tensor, tf.Tensor], tf.Tensor],
+        ys: list[tf.Tensor],
+        ys_truth: list[tf.Tensor],
+        name: str = None
+    ) -> list[tf.Tensor]:
+        # for each level, loss over x_hat and x
+        tf.assert_equal(len(ys), len(ys_truth))
+        return [tf.identity(fn(y, ys_truth[idx_level]), name=name) for idx_level, y in enumerate(ys)]
 
     @classmethod
-    def get_reconstruction_loss(cls, xs_hat: tf.TensorArray, x: tf.Tensor) -> tf.Tensor:
-        # for each level, loss over x_hat and x
-
-        # FIXME: bit of a hack there, check that it works.
-        # second argument xs_hat not used.
-        return tf.identity(
-            cls._apply_loss_vec(
-                lambda y, _: tf.square(x - y),
-                xs_hat,
-                tf.TensorArray(xs_hat.dtype, size=xs_hat.size())
-            ),
+    def reconstruction_loss(cls, xs_hat: list[tf.Tensor], x: tf.Tensor) -> list[tf.Tensor]:
+        return cls._apply_loss_vec(
+            lambda y, y_truth: tf.square(y_truth - y),
+            xs_hat,
+            [x] * len(xs_hat),
             name="loss_reconstruction"
         )
 
     @classmethod
-    def get_code_reconstruction_loss(cls, zs_hat: tf.TensorArray, zs: tf.TensorArray) -> tf.Tensor:
-        return tf.identity(
-            cls._apply_loss_vec(
-                lambda y, y_truth: tf.square(y_truth - y), zs_hat, zs),
+    def code_reconstruction_loss(cls, zs_hat: list[tf.Tensor], zs: list[tf.Tensor]) -> list[tf.Tensor]:
+        return cls._apply_loss_vec(
+            lambda y, y_truth: tf.square(y_truth - y),
+            zs_hat, zs,
             name="loss_code_reconstruction"
         )
 
     @classmethod
-    def get_quantisation_codebook_loss(cls, zs_q: tf.TensorArray, zs: tf.TensorArray, axes: list[int]) -> tf.Tensor:
+    def quantisation_codebook_loss(cls, zs_q: list[tf.Tensor], zs: list[tf.Tensor], axes: list[int]) -> list[tf.Tensor]:
         return cls._apply_loss_vec(
             lambda y, y_truth:
-                VectorQuantiser.get_quantisation_codebook_loss(
+                VectorQuantiser.quantisation_codebook_loss(
                     y,
                     y_truth,
                     axes=axes
                 ),
-            zs_q,
-            zs
+            zs_q, zs
         )
 
     @classmethod
-    def get_quantisation_commit_loss(cls, zs_q: tf.TensorArray, zs: tf.TensorArray, axes: list[int]) -> tf.Tensor:
+    def quantisation_commit_loss(cls, zs_q: list[tf.Tensor], zs: list[tf.Tensor], axes: list[int]) -> list[tf.Tensor]:
         return cls._apply_loss_vec(
             lambda y, y_truth:
-                VectorQuantiser.get_quantisation_commit_loss(
+                VectorQuantiser.quantisation_commit_loss(
                     y,
                     y_truth,
                     axes=axes
                 ),
-            zs_q,
-            zs
+            zs_q, zs
         )
 
     @classmethod
-    def get_quantisation_loss(cls, zs_q: tf.TensorArray, zs: tf.TensorArray, beta: float, axes: list[int]) -> tf.Tensor:
+    def quantisation_loss(cls, zs_q: list[tf.Tensor], zs: list[tf.Tensor], beta: float, axes: list[int]) -> list[tf.Tensor]:
         return cls._apply_loss_vec(
             lambda y, y_truth:
-                VectorQuantiser.get_quantisation_loss(
+                VectorQuantiser.quantisation_loss(
                     y,
                     y_truth,
                     beta=beta,
                     axes=axes
                 ),
-            zs_q,
-            zs
+            zs_q, zs
         )
 
     @classmethod
-    def get_codebook_dissimilarity_loss(cls, es_hat: tf.TensorArray, es: tf.TensorArray, nb_embeddings: int) -> tf.Tensor:
+    def codebook_dissimilarity_loss(cls, es_hat: list[tf.Tensor], es: list[tf.Tensor], nb_embeddings: int) -> list[tf.Tensor]:
         return cls._apply_loss_vec(
             lambda y, y_truth:
-                VectorQuantiser.get_codebook_dissimilarity_loss(
+                VectorQuantiser.codebook_dissimilarity_loss(
                     y,
                     y_truth,
                     nb_embeddings=nb_embeddings
                 ),
-            es_hat,
-            es
+            es_hat, es
         )
 
     class ForwardResidualSubBlock(tf.keras.layers.Layer):
@@ -317,7 +291,7 @@ class JukeboxAutoEncoder(tf.keras.Model):
                     size_kernel=size_kernel_res,
                     rate_dilation=rate_dilation_res
                 )
-                for _ in tf.range(nb_blocks_res)]
+                for _ in range(nb_blocks_res)]
 
         def call(self, x: tf.Tensor) -> tf.Tensor:
             x_down = self._conv_down(x)
@@ -344,7 +318,7 @@ class JukeboxAutoEncoder(tf.keras.Model):
                     size_kernel=size_kernel_res,
                     rate_dilation=rate_dilation_res
                 )
-                for _ in tf.range(nb_blocks_res)]
+                for _ in range(nb_blocks_res)]
             self._conv_up = ConvDimTranspose(
                 nb_filters=nb_filters,
                 size_kernel=size_kernel_up,
@@ -380,7 +354,7 @@ class JukeboxAutoEncoder(tf.keras.Model):
                     size_kernel_res=size_kernel_res,
                     rate_dilation_res=rate_dilation_res
                 )
-                for _ in tf.range(nb_blocks_down)]
+                for _ in range(nb_blocks_down)]
 
         def call(self, x: tf.Tensor) -> tf.Tensor:
             for block in self._blocks_down:
@@ -410,7 +384,7 @@ class JukeboxAutoEncoder(tf.keras.Model):
                     size_kernel_res=size_kernel_res,
                     rate_dilation_res=rate_dilation_res
                 )
-                for _ in tf.range(nb_blocks_up)]
+                for _ in range(nb_blocks_up)]
             self._conv_proj = ConvDim(
                 nb_filters=nb_channels_output,
                 size_kernel=size_kernel_res,
