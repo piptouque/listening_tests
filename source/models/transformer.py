@@ -45,7 +45,19 @@ class Transformer(tf.keras.Model):
             nb_heads=nb_heads,
             rate_dropout=rate_dropout
         )
-        self._layer_fit_output = tf.keras.layers.Dense(size_vocab_target)
+        self._layer_fit_output = tf.keras.Sequential()
+        if size_vocab_input != size_vocab_target:
+            self._layer_fit_output.add(
+                tf.keras.layers.Permute((-2, -1)))
+            self._layer_fit_output.add(
+                tf.keras.layers.Dense(size_vocab_target))
+
+            self._layer_fit_output.add(
+                tf.keras.layers.Permute((-2, -1))
+            )
+        else:
+            self._layer_fit_output = tf.keras.layers.Lambda(lambda x: x)
+
 
     def call(self,
              inputs: tuple[tf.Tensor, tf.Tensor],
@@ -62,7 +74,7 @@ class Transformer(tf.keras.Model):
             return_weights (bool, optional): _description_. Defaults to False.
 
         Returns:
-            tf.Tensor: _description_
+            tf.Tensor: Predictions (batch, time, size_vocab_target)
         """
         input_, target = inputs
         mask_lin_padding, mask_look_ahead = self._make_masks(input_, target)
@@ -73,10 +85,8 @@ class Transformer(tf.keras.Model):
         size_seq_input = input_.shape[-2]
         size_seq_target = target.shape[-2]
         #
-        mask_padding_encoder = tf.stack(
-            [mask_lin_padding] * size_seq_input, -2)
-        mask_padding_decoder = tf.stack(
-            [mask_lin_padding] * size_seq_target, -2)
+        mask_padding_encoder = tf.stack([mask_lin_padding] * size_seq_input, -2)
+        mask_padding_decoder = tf.stack([mask_lin_padding] * size_seq_target, -2)
         #
         output_encoder = self._encoder(
             input_,
@@ -97,7 +107,7 @@ class Transformer(tf.keras.Model):
             return output
 
     @staticmethod
-    def get_masked_loss(fn_loss: Callable[[tf.Tensor, tf.Tensor], tf.Tensor], value_mask: int = 0) -> Callable[[tf.Tensor, tf.Tensor], tf.Tensor]:
+    def get_masked_loss(fn_loss: Callable[[tf.Tensor, tf.Tensor], tf.Tensor], *, value_mask: int = 0) -> Callable[[tf.Tensor, tf.Tensor], tf.Tensor]:
         # mask the padding token (0)
         def _loss_masked(y: tf.Tensor, y_truth: tf.Tensor) -> tf.Tensor:
             mask = tf.math.logical_not(tf.math.equal(y_truth, value_mask))
@@ -107,7 +117,18 @@ class Transformer(tf.keras.Model):
         return _loss_masked
 
     @staticmethod
-    def get_masked_accuracy(fn_accuracy: Callable[[tf.Tensor, tf.Tensor], tf.Tensor], value_mask: int = 0) -> Callable[[tf.Tensor, tf.Tensor], tf.Tensor]:
+    def get_masked_loss_sparse(fn_loss_sparse: Callable[[tf.Tensor, tf.Tensor], tf.Tensor], *, value_mask: int = 0) -> Callable[[tf.Tensor, tf.Tensor], tf.Tensor]:
+        # mask the padding token (0)
+        def _loss_masked(y: tf.Tensor, y_truth: tf.Tensor) -> tf.Tensor:
+            y_truth_val = tf.argmax(y_truth, axis=-1)
+            mask = tf.math.logical_not(tf.math.equal(y_truth_val, value_mask))
+            loss_ = fn_loss_sparse(y, y_truth)
+            loss_ *= tf.cast(mask, loss_.dtype)
+            return loss_ / tf.reduce_sum(tf.cast(mask, loss_.dtype))
+        return _loss_masked
+
+    @staticmethod
+    def get_masked_accuracy(fn_accuracy: Callable[[tf.Tensor, tf.Tensor], tf.Tensor], *, value_mask: int = 0) -> Callable[[tf.Tensor, tf.Tensor], tf.Tensor]:
         def _accuracy_masked(y: tf.Tensor, y_truth: tf.Tensor) -> tf.Tensor:
             acc_ = fn_accuracy(y, y_truth)
             mask = tf.math.logical_not(tf.math.equal(y_truth, value_mask))
@@ -153,9 +174,10 @@ class Transformer(tf.keras.Model):
         #
         size_seq_target = target.shape[-1]
         mask_look_ahead = cls._make_look_ahead_mask(size_seq_target)
-        mask_padding_target = cls._make_padding_mask_lin(target)
+        mask_lin_padding_target = cls._make_padding_mask_lin(target)
         mask_look_ahead = tf.logical_and(
-            mask_look_ahead, tf.expand_dims(mask_padding_target, 0))
+            mask_look_ahead,
+            tf.stack([mask_lin_padding_target] * size_seq_target, -1))
         # broadcast last dim of padding mask to input sequence dim
         return mask_lin_padding, mask_look_ahead
 
@@ -273,9 +295,6 @@ class Transformer(tf.keras.Model):
             )
             o_1 = self._norm_1(h_1 + x)
             #
-            # print(output_encoder.shape, o_1.shape)
-            # print(o_1, output_encoder)
-            # print(mask_padding))
             h_2, weights_h_2 = self._att_cross_io(
                 o_1, output_encoder,
                 attention_mask=mask_padding, training=training,
@@ -423,8 +442,6 @@ class CouplingSolver(tf.keras.Model):
         #
         self._vector_quantiser = vector_quantiser
         #
-        self._transformers = None
-        #
         self._fn_transformer = lambda: Transformer(
             size_vocab_input=self._vector_quantiser.nb_embeddings,
             size_vocab_target=self._vector_quantiser.nb_embeddings,
@@ -433,56 +450,58 @@ class CouplingSolver(tf.keras.Model):
             size_feedforward=size_feedforward,
             nb_heads=nb_heads
         )
+        self._transformer = self._fn_transformer()
 
     def build(self, shapes_input: list[tuple[int, ...]]) -> None:
         nb_levels = len(shapes_input)
-        self._transformers = [self._fn_transformer()
-                              for _ in range(nb_levels)]
-        # for idx_level, transformer in enumerate(self._transformers):
-        # transformer.build(
-        # [shapes_input[idx_level], shapes_input[idx_level]])
-        # super(CouplingSolver, self).build(shapes_input)
         # Can't use build() with integer-typed tensors.
         # Have to use call() with placeholder data
         # Have to fully define them and set the batch dim
         placeholders = [tf.keras.Input(shape[1:], dtype=tf.int64)
                         for shape in shapes_input]
-        for idx_level, transformer in enumerate(self._transformers):
-            input_ = self._preprocess_input(placeholders[idx_level])
-            _ = transformer([input_, input_])
+        for idx_level in range(nb_levels):
+            input_ = self.preprocess_input(placeholders[idx_level])
+        _ = self._transformer([input_, input_])
 
     def _predict_training(self, es_a: list[tf.Tensor], es_b: list[tf.Tensor]) -> list[tf.Tensor]:
-        es_b_hat = [None] * len(es_b)
+        preds_output_level = [None] * len(es_b)
         for idx_level, e_a in enumerate(es_a):
             # The 0, 1, 2 values are reserved
             # resp. for 'padding', 'start' and 'end' sequence tokens
             # so we must pass the indices starting at 3,
             # and substract it back afterwards.
-            input_ = self._preprocess_input(es_a[idx_level])
-            target = self._preprocess_input(es_b[idx_level])
-            target_input = target[..., :-1]
-            output, _ = self._transformer(
-                [input_, target_input], training=True)
-            output = self._postprocess_output(
-                output, shape=e_a.shape)
-            output = tf.concat([[target[..., 0]], output], -1)
-            es_b_hat[idx_level] = output
-        return es_b_hat
+            input_ = self.preprocess_input(e_a)
+            target = self.preprocess_input(es_b[idx_level])
+            target_roll = target[..., :-1]
+            input_roll = input_[..., 1:]
+            preds_output = self._transformer([input_roll, target_roll], training=True)
+            # preds_output: (batch, time, nb_embeddings)
+            # output = tf.argmax(preds_output, axis=-1)
+            # add back the first prediction (ignored)
+            target_first = tf.one_hot(tf.expand_dims(target[..., 0], -1), depth=preds_output.shape[-1], axis=-1)
+            preds_output = tf.concat([target_first, preds_output], -2)
+            # output = self._postprocess_output(output, shape=e_a.shape)
+            preds_output_level[idx_level] = preds_output
+        return preds_output_level
 
     def _predict_inference(self, es_a: list[tf.Tensor]) -> list[tf.Tensor]:
         es_b_hat = [None] * len(es_a)
         for idx_level, e_a in enumerate(es_a):
-            input_ = self._preprocess_input(e_a)
+            input_ = self.preprocess_input(e_a)
             #
             size_seq = input_.shape[-1]
+            size_batch = input_.shape[0]
             arr_output = tf.TensorArray(dtype=input_.dtype, size=size_seq)
             # add a first 'start' token first
-            arr_output = arr_output.write(0, tf.cast(
-                tf.expand_dims(self._TOKEN_START, 0), input_.dtype))
+            output_first = tf.expand_dims(tf.convert_to_tensor(self._TOKEN_START), 0)
+            if input_.shape.is_fully_defined():
+                output_first = tf.broadcast_to(output_first, [input_.shape[0]])
+            output_first = tf.cast(output_first, input_.dtype)
+            arr_output = arr_output.write(0, output_first)
             #
             for idx_token in range(size_seq):
-                output = tf.transpose(arr_output.stack()[:idx_token+2])
-                preds = self._transformer([input_, output], training=False)
+                preds_output = tf.transpose(arr_output.stack()[:idx_token+1])
+                preds = self._transformer([input_, preds_output], training=False)
                 # We are actually only interested in the token that was predicted last, 
                 # select the last token from the seq_len dimension
                 pred_last = preds[..., -1, :]
@@ -493,18 +512,16 @@ class CouplingSolver(tf.keras.Model):
             # compute attention weights outside of loop
             # _, weights_att = transformer([input_, output], training=False, return_weights=True)
             # no need to add a final 'end' token.
-            output = arr_output.stack()
+            preds_output = tf.transpose(arr_output.stack())
             # also remove first 'start' token added.
-            output = output[..., 1:, :]
-            output = self._postprocess_output(
-                output.read(idx_level), e_a.shape)
-            es_b_hat[idx_level] = output
+            preds_output = preds_output[..., 1:, :]
+            e_b_hat = self.postprocess_output(preds_output, e_a.shape)
+            es_b_hat[idx_level] = e_b_hat
         return es_b_hat
 
     def call(self,
              inputs: Union[list[tf.Tensor], tuple[list[tf.Tensor], list[tf.Tensor]]],
-             training: bool
-             ) -> list[tf.Tensor]:
+             training: bool) -> list[tf.Tensor]:
         es_b_hat = None
         if training:
             es_a, es_b = inputs
@@ -514,19 +531,32 @@ class CouplingSolver(tf.keras.Model):
             es_b_hat = self._predict_inference(es_a)
         return es_b_hat
 
+    @classmethod
+    def _transcoding_loss(cls, target: tf.Tensor, preds_output: tf.Tensor) -> tf.Tensor:
+        return tf.keras.metrics.sparse_categorical_crossentropy(target, preds_output, from_logits=False, axis=-1)
+
+    @classmethod
+    def _masked_transcoding_loss(cls, target: tf.Tensor, preds_output: tf.Tensor) -> tf.Tensor:
+        fn_loss = cls._transcoding_loss
+        fn_loss = Transformer.get_masked_loss_sparse(fn_loss, value_mask=cls._TOKEN_PAD)
+        return fn_loss(target, preds_output)
+
+    @classmethod
+    def coupling_loss(cls, targets: list[tf.Tensor], preds_output_level: list[tf.Tensor]) -> list[tf.Tensor]:
+        return [cls._masked_transcoding_loss(targets[idx_level], preds_output) for idx_level, preds_output in enumerate(preds_output_level)]
+
     @ classmethod
-    def _preprocess_input(cls, e: tf.Tensor) -> tf.Tensor:
+    def preprocess_input(cls, e: tf.Tensor) -> tf.Tensor:
         input_ = cls._offset_sequence(e)
-        # FIXME: <??>
         # flatten all but batch
         nb_els = tf.math.reduce_prod(tf.convert_to_tensor(input_.shape[1:]))
         input_ = tf.reshape(input_, [-1, nb_els])
         return input_
 
     @ classmethod
-    def _postprocess_output(cls, output: tf.Tensor, shape: tuple[int]) -> tf.Tensor:
+    def postprocess_output(cls, output: tf.Tensor, shape: tuple[int]) -> tf.Tensor:
         # infer batch dim
-        shape_reshape = [-1, *shape[:1]]
+        shape_reshape = [-1, *shape[1:]]
         # revert flatten
         e = tf.reshape(output, shape_reshape)
         e = cls._unoffset_sequence(e)

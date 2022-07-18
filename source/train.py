@@ -21,6 +21,8 @@ if __name__ == '__main__':
     args = get_args()
     config = process_config(args)
 
+    print(config.training.nb_steps_per_epoch)
+    print(config.training.nb_epochs)
     # create the experiments dirs
     create_dirs([config.save.path.log_dir,
                 config.save.path.checkpoint_dir])
@@ -180,5 +182,6 @@ if __name__ == '__main__':
             validation_data=ds_val,
             callbacks=[cb_checkpoint, cb_log],
             epochs=config.training.nb_epochs,
-            steps_per_epoch=None
+            steps_per_epoch=config.training.nb_steps_per_epoch,
+            validation_steps=1
         )

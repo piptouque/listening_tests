@@ -47,7 +47,7 @@
             "nb_heads": 8
         },
         "something": {
-            "gamma_reconstruction": 0.99,
+            "gamma_reconstruction": 0.01,
             "gamma_quantisation_codebook": 0.99,
             "gamma_quantisation_commit": 0.99
         }
@@ -55,8 +55,9 @@
     "loss": {},
     "training": {
         "rate_learning": 0.02,
-        "size_batch": 128,
-        "nb_epochs": 10
+        "size_batch": 32,
+        "nb_epochs": 10,
+        "nb_steps_per_epoch": null
     },
     "dataset": {
         "name": "canonne_duos",
