@@ -13,6 +13,8 @@ import tensorflow_datasets as tfds
 import tensorflow_io as tfio
 import dataclasses
 
+from utils.preprocessing import AudioDescriptorExtractor
+
 
 _URL_DOWNLOAD = None
 # TODO(canonne_duos): Markdown description  that will appear on the catalog page.
@@ -41,16 +43,27 @@ _CITATION = """
 """
 _HOMEPAGE = None
 
+_next_pow_2 = lambda a: int(2 ** np.ceil(np.log2(a))) 
+
 _NB_DUOS = 10
 _NB_TAKES = 4
 _NB_CHANNELS = 2
 
+# in Hertz
 _RATE_AUDIO = 48000
+#
+_SIZE_WINDOW_DESCRIPTOR = 1024
+_STRIDE_WINDOW_DESCRIPTOR = 256
+_FREQ_MIN_DESCRIPTOR = 40
+_FREQ_MAX_DESCRIPTOR = 12000
+
+_
 # Wanted length (in seconds) for a single example.
 # Will be increased to the next power of two.
 _LENGTH_BLOCK_DESIRED = 2
 # better to have a power of two.
-_SIZE_BLOCK = int(2 ** np.ceil(np.log2(_RATE_AUDIO * _LENGTH_BLOCK_DESIRED)))
+_SIZE_EXAMPLE_AUDIO = _next_pow_2(_RATE_AUDIO * _LENGTH_BLOCK_DESIRED)
+_SIZE_BLOCK_DESCRIPTOR = _SIZE_EXAMPLE_AUDIO // _STRIDE_WINDOW_DESCRIPTOR
 _DTYPE_AUDIO = tf.float32
 
 _RATE_ANNOTATION = 4
@@ -106,19 +119,24 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
     def _info(self) -> tfds.core.DatasetInfo:
         """Returns the dataset metadata."""
         # TODO(canonne_duos): Specifies the tfds.core.DatasetInfo object
+        names_descriptor = AudioDescriptorExtractor.get_descriptor_names()
+        descriptors = zip(names_descriptor, [tfds.features.Tensor(shape=(_SIZE_BLOCK_DESCRIPTOR, _NB_CHANNELS), dtype=tf.dtypes.float32) for _ in len(names_descriptor)])
         return tfds.core.DatasetInfo(
             builder=self,
             metadata=tfds.core.MetadataDict({
                 'rate_sample': _RATE_AUDIO,
-                'rate_annotation': _RATE_ANNOTATION
+                'rate_annotation': _RATE_ANNOTATION,
+                'size_window': _SIZE_WINDOW_DESCRIPTOR,
+                'stride_window': _STRIDE_WINDOW_DESCRIPTOR
             }),
             features=tfds.features.FeaturesDict({
                 # These are the features of your dataset like images, labels ...
-                'audio': tfds.features.Audio(shape=(_SIZE_BLOCK, _NB_CHANNELS), file_format='wav', sample_rate=_RATE_AUDIO, dtype=tf.float32),
+                'audio': tfds.features.Audio(shape=(_SIZE_EXAMPLE_AUDIO, _NB_CHANNELS), file_format='wav', sample_rate=_RATE_AUDIO, dtype=tf.float32),
+                'descriptors': descriptors,
                 'annotations': {
-                    'x_play': tfds.features.Tensor(shape=(_SIZE_BLOCK, _NB_CHANNELS), dtype=tf.dtypes.float32),
-                    'y_play': tfds.features.Tensor(shape=(_SIZE_BLOCK, _NB_CHANNELS), dtype=tf.dtypes.float32),
-                    'dir_play': tfds.features.Tensor(shape=(_SIZE_BLOCK, _NB_CHANNELS), dtype=tf.dtypes.int8),
+                    'x_play': tfds.features.Tensor(shape=(_SIZE_EXAMPLE_AUDIO, _NB_CHANNELS), dtype=tf.dtypes.float32),
+                    'y_play': tfds.features.Tensor(shape=(_SIZE_EXAMPLE_AUDIO, _NB_CHANNELS), dtype=tf.dtypes.float32),
+                    'dir_play': tfds.features.Tensor(shape=(_SIZE_EXAMPLE_AUDIO, _NB_CHANNELS), dtype=tf.dtypes.int8),
                 },
                 'labels': {
                     'idx_duo': tfds.features.ClassLabel(num_classes=_NB_DUOS+1),
@@ -232,15 +250,24 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
 
     def _split_example(self, example_whole: dict) -> List[dict]:
         x_audio_split = self._split_droplast(
-            example_whole['audio'], _SIZE_BLOCK)
+            example_whole['audio'], _SIZE_EXAMPLE_AUDIO)
         ann_x_play_split = self._split_droplast(
-            example_whole['annotations']['x_play'], _SIZE_BLOCK)
+            example_whole['annotations']['x_play'], _SIZE_EXAMPLE_AUDIO)
         ann_y_play_split = self._split_droplast(
-            example_whole['annotations']['y_play'], _SIZE_BLOCK)
+            example_whole['annotations']['y_play'], _SIZE_EXAMPLE_AUDIO)
         ann_dir_play_split = self._split_droplast(
-            example_whole['annotations']['dir_play'], _SIZE_BLOCK)
+            example_whole['annotations']['dir_play'], _SIZE_EXAMPLE_AUDIO)
         list_examples_split = []
+        names_descriptor = AudioDescriptorExtractor.get_descriptor_names()
         for i in range(x_audio_split.shape[0]):
+            list_descriptors = AudioDescriptorExtractor.compute_audio_descriptors_numpy(
+                x_audio_split[i],
+                rate_sample=_RATE_AUDIO,
+                size_win=_SIZE_WINDOW_DESCRIPTOR,
+                stride_win=_STRIDE_WINDOW_DESCRIPTOR,
+                freq_min=_FREQ_MIN_DESCRIPTOR,
+                freq_max=_FREQ_MAX_DESCRIPTOR
+            )
             list_examples_split.append({
                 'audio': np.expand_dims(x_audio_split[i], axis=-1),
                 'annotations': {
@@ -248,7 +275,8 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
                     'y_play': np.expand_dims(ann_y_play_split[i], axis=-1),
                     'dir_play': np.expand_dims(ann_dir_play_split[i], axis=-1),
                 },
-                'labels': example_whole['labels']
+                'labels': example_whole['labels'],
+                'descriptors': zip(names_descriptor, [np.expand_dim(descr, axis=-1) for descr in list_descriptors])
             })
         return list_examples_split
 

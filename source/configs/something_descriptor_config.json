@@ -1,5 +1,5 @@
 {
-    "exp_name": "something_descriptors",
+    "exp_name": "something_descriptor",
     "data": {
         "audio": {
             "time": {
@@ -13,7 +13,7 @@
                 "nb_freqs_mel": 32
             },
             "features": {
-                "kind": "descriptors",
+                "kind": "descriptor",
                 "names": [
                     "freq_0",
                     "prob_freq",
@@ -26,25 +26,43 @@
         }
     },
     "model": {
+        "vector_quantiser": {
+            "nb_embeddings": 32,
+            "beta": 0.99
+        },
         "jukebox": {
-            "nb_levels": 2,
+            "nb_blocks_sample": [
+                3,
+                5
+            ],
+            "nb_blocks_res": [
+                4,
+                2
+            ],
             "nb_filters": 8,
-            "nb_blocks_sample": [3, 5],
             "size_kernel_sample": 4,
             "stride_sample": 2,
-            "nb_blocks_res": [4, 2],
             "size_kernel_res": 3,
-            "rate_dilation_res": 3,
-            "size_codebook": 256,
-            "beta_codebook": 0.99
+            "rate_dilation_res": 3
+        },
+        "coupling_solver": {
+            "nb_blocks": 3,
+            "size_model": 64,
+            "size_feedforward": 16,
+            "nb_heads": 8
+        },
+        "something": {
+            "gamma_reconstruction": 0.01,
+            "gamma_quantisation_codebook": 0.99,
+            "gamma_quantisation_commit": 0.99
         }
     },
-    "loss": {
-    },
+    "loss": {},
     "training": {
         "rate_learning": 0.02,
-        "size_batch": 64,
-        "nb_epochs": 10
+        "size_batch": 32,
+        "nb_epochs": 10,
+        "nb_steps_per_epoch": null
     },
     "dataset": {
         "name": "canonne_duos",

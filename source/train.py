@@ -6,7 +6,7 @@ import tensorflow_datasets as tfds
 
 from models.common import VectorQuantiser
 from models.models import SomethingModel, JukeboxAutoEncoder, CouplingSolver
-from models.preprocessing import AudioDescriptorsExtractor, AudioSpectrumExtractor
+from utils.preprocessing import AudioDescriptorsExtractor, AudioSpectrumExtractor
 from utils.dirs import create_dirs
 from utils.config import process_config
 from utils.utils import get_args
@@ -21,8 +21,6 @@ if __name__ == '__main__':
     args = get_args()
     config = process_config(args)
 
-    print(config.training.nb_steps_per_epoch)
-    print(config.training.nb_epochs)
     # create the experiments dirs
     create_dirs([config.save.path.log_dir,
                 config.save.path.checkpoint_dir])
@@ -72,7 +70,7 @@ if __name__ == '__main__':
         )
 
         kind_features = config.data.audio.features.kind
-        if kind_features == 'descriptors':
+        if kind_features == 'descriptor':
             Extractor = AudioDescriptorsExtractor
         elif kind_features == 'spectrum':
             Extractor = AudioSpectrumExtractor
@@ -113,13 +111,12 @@ if __name__ == '__main__':
                         lambda el: tf.transpose(el, perm=tf.roll(
                             tf.range(tf.rank(el)), shift=-1, axis=0))
                     )
-            # pre-processing
-            ds = ds.map(feature_extractor)
             # Split example between input and target
-            ds_a = ds.map(lambda el: tuple(tf.unstack(
-                tf.expand_dims(el, axis=-1), axis=-2)))
+            ds_a = ds.map(lambda el: tuple(tf.unstack(tf.expand_dims(el, axis=-1), axis=-2)))
             ds_b = ds_a.map(lambda *inputs: inputs[::-1])
             ds = ds_a.concatenate(ds_b)
+            # pre-processing
+            ds = ds.map(lambda a, b: (feature_extractor(a), feature_extractor(b)))
             return ds
 
         ds_train = prep_ds(ds_train)
