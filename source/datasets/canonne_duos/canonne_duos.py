@@ -2,7 +2,8 @@
 
 from pathlib import Path
 import re
-from typing import Callable, List
+import dataclasses
+from typing import Any, Callable, List, Optional
 
 import librosa
 import pandas as pd
@@ -11,12 +12,7 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_datasets as tfds
 import tensorflow_io as tfio
-import dataclasses
 
-from utils.preprocessing import AudioDescriptorExtractor
-
-
-_URL_DOWNLOAD = None
 # TODO(canonne_duos): Markdown description  that will appear on the catalog page.
 _DESCRIPTION = """
 Description is **formatted** as markdown.
@@ -37,16 +33,21 @@ _CITATION = """
   doi = {10.1037/aca0000422},
   url = {http://doi.apa.org/getdoi.cfm?doi=10.1037/aca0000422},
   urldate = {2022-02-28},
-  abstract = {Agents engaged in creative joint actions might need to find a balance between the demands of doing something collectively, by adopting congruent and interacting behaviors, and the goal of delivering a creative output, which can eventually benefit from disagreements and autonomous behaviors. Here, we investigate this idea in the context of collective free improvisation – a paradigmatic example of group creativity in which musicians aim at creating music that is as complex and unprecedented as possible without relying on predefined plans or individual roles. Controlling for both the familiarity between the musicians and their physical co-presence, duos of improvisers were asked to freely improvise together and to individually annotate their performances with a digital interface, indicating at each time whether they were playing “with”, “against”, or “without” their partner. At an individual level, we found that musicians largely intended to converge with their co-improviser, making only occasional use of non-cooperative or non-interactive modes such as “playing against” or “playing without”. By contrast, at the group level, musicians tended to combine their relational intents in such a way as to create interactional dissensus. We also demonstrate that co-presence and familiarity act as interactional smoothers: they increase the agents’ overall level of relational plasticity and allow for the exploration of less cooperative behaviors. Overall, our findings suggest that relational intents might function as a primary resource for creative joint actions.},
   langid = {english}
 }
 """
 _HOMEPAGE = None
+_URL_DOWNLOAD = None
 
-_next_pow_2 = lambda a: int(2 ** np.ceil(np.log2(a))) 
+_DO_BUILD_DESCRIPTOR = False
+_DTYPE_AUDIO = tf.dtypes.float32
+
+
+def _next_pow_2(a): return int(2 ** np.ceil(np.log2(a)))
+
 
 _NB_DUOS = 10
-_NB_TAKES = 4
+_MAX_NB_TAKES = 4
 _NB_CHANNELS = 2
 
 # in Hertz
@@ -57,27 +58,42 @@ _STRIDE_WINDOW_DESCRIPTOR = 256
 _FREQ_MIN_DESCRIPTOR = 40
 _FREQ_MAX_DESCRIPTOR = 12000
 
-_
+_NAMES_DESCRIPTORS = [
+    'freq_0', 'prob_freq',
+    'root_mean_square', 'zero_crossing_rate',
+    'spectral_flatness', 'spectral_centroid'
+]
 # Wanted length (in seconds) for a single example.
 # Will be increased to the next power of two.
 _LENGTH_BLOCK_DESIRED = 2
 # better to have a power of two.
 _SIZE_EXAMPLE_AUDIO = _next_pow_2(_RATE_AUDIO * _LENGTH_BLOCK_DESIRED)
 _SIZE_BLOCK_DESCRIPTOR = _SIZE_EXAMPLE_AUDIO // _STRIDE_WINDOW_DESCRIPTOR
-_DTYPE_AUDIO = tf.float32
+
 
 _RATE_ANNOTATION = 4
 
+
 _MAP_LABEL_INSTRUMENTS = {
-    'piano': 0,
-    'electric-guitar': 1,
-    'bass-guitar': 2,
-    'viola': 3,
-    'cello': 4,
+    'piano': 1,
+    'prepared-piano': 2,
+    'bass-guitar': 3,
+    'electric-guitar': 4,
     'double-bass': 5,
-    'voice': 6,
-    'trumpet': 7,
-    'saxophone': 8,
+    'cello': 6,
+    'viola': 7,
+    'voice': 8,
+    'flute': 9,
+    'duduk': 10,
+    'bass-clarinet': 11,
+    'voice-clarinet': 12,
+    'saxophone': 13,
+    'baryton-saxophone': 14,
+    'tenor-saxophone': 15,
+    'alto-saxophone': 16,
+    'trumpet': 17,
+    'drums': 18,
+    'electronics': 19,
 }
 
 _MAP_LABELS_PLAYING = {
@@ -99,28 +115,27 @@ class CanonneDuosConfig(tfds.core.BuilderConfig):
 class CanonneDuos(tfds.core.GeneratorBasedBuilder):
     """DatasetBuilder for canonne_duos dataset."""
 
-    MANUAL_DOWNLOAD_INSTRUCTIONS = """
-    TODO
-    """
     VERSION = tfds.core.Version('1.0.0')
     RELEASE_NOTES = {
         '1.0.0': 'Initial release.',
     }
     # pytype: disable=wrong-keyword-args
     BUILDER_CONFIGS = [
+        # pylint: disable=wrong-keyword-args
         CanonneDuosConfig(
             name='joined',
             description='Tracks from the same take and duo are joined in a single example',
             kind_split='joined'
         )
     ]
+    # pylint: enable=wrong-keyword-args
     # pytype: enable=wrong-keyword-args
+    MANUAL_DOWNLOAD_INSTRUCTIONS = """
+    TODO
+    """
 
     def _info(self) -> tfds.core.DatasetInfo:
         """Returns the dataset metadata."""
-        # TODO(canonne_duos): Specifies the tfds.core.DatasetInfo object
-        names_descriptor = AudioDescriptorExtractor.get_descriptor_names()
-        descriptors = zip(names_descriptor, [tfds.features.Tensor(shape=(_SIZE_BLOCK_DESCRIPTOR, _NB_CHANNELS), dtype=tf.dtypes.float32) for _ in len(names_descriptor)])
         return tfds.core.DatasetInfo(
             builder=self,
             metadata=tfds.core.MetadataDict({
@@ -132,7 +147,11 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
             features=tfds.features.FeaturesDict({
                 # These are the features of your dataset like images, labels ...
                 'audio': tfds.features.Audio(shape=(_SIZE_EXAMPLE_AUDIO, _NB_CHANNELS), file_format='wav', sample_rate=_RATE_AUDIO, dtype=tf.float32),
-                'descriptors': descriptors,
+                'descriptors': dict(zip(
+                    _NAMES_DESCRIPTORS,
+                    [tfds.features.Tensor(shape=(_SIZE_BLOCK_DESCRIPTOR, _NB_CHANNELS),
+                                          dtype=tf.dtypes.float32) for _ in range(len(_NAMES_DESCRIPTORS))]
+                )),
                 'annotations': {
                     'x_play': tfds.features.Tensor(shape=(_SIZE_EXAMPLE_AUDIO, _NB_CHANNELS), dtype=tf.dtypes.float32),
                     'y_play': tfds.features.Tensor(shape=(_SIZE_EXAMPLE_AUDIO, _NB_CHANNELS), dtype=tf.dtypes.float32),
@@ -140,7 +159,7 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
                 },
                 'labels': {
                     'idx_duo': tfds.features.ClassLabel(num_classes=_NB_DUOS+1),
-                    'idx_take': tfds.features.ClassLabel(num_classes=_NB_TAKES+1),
+                    'idx_take': tfds.features.ClassLabel(num_classes=_MAX_NB_TAKES+1),
                     'idx_channel': tfds.features.Tensor(shape=(_NB_CHANNELS,), dtype=tf.dtypes.int8),
                     'idx_instrument': tfds.features.Tensor(shape=(_NB_CHANNELS,), dtype=tf.dtypes.int8)
                 }
@@ -162,7 +181,6 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
             path = dl_manager.download_and_extract(_URL_DOWNLOAD)
         else:
             path = dl_manager.manual_dir
-
         return {
             'train': self._generate_examples(
                 path_audio=path / 'audio' / 'train',
@@ -176,126 +194,150 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
 
     def _generate_examples(self, path_audio: Path, path_ann: Path):
         """Yields examples."""
-        # TODO(canonne_duos): Yields (key, example) tuples from the dataset
-        pat_file_audio = re.compile(_PATTERN_FILE_AUDIO)
         pat_dir_duo = re.compile(_PATTERN_DIR_DUO)
         pat_dir_take = re.compile(_PATTERN_DIR_TAKE)
         ann_dict = self._extract_annotations(
             path_ann / 'dt_duo_positions.csv')
         for path_dir_duo in path_audio.iterdir():
+            if not path_dir_duo.is_dir():
+                continue
             m_dir_duo = pat_dir_duo.match(path_dir_duo.name)
-            if m_dir_duo is not None:
-                g_dir_duo = m_dir_duo.groupdict()
-                idx_dir_duo = int(g_dir_duo['duo'])
-                for path_dir_take in path_dir_duo.iterdir():
-                    m_dir_take = pat_dir_take.match(path_dir_take.name)
-                    if m_dir_take is not None:
-                        g_dir_take = m_dir_take.groupdict()
-                        idx_dir_take = int(g_dir_take['take'])
-                        list_channel_examples = [None] * _NB_CHANNELS
-                        for path_file_audio in path_dir_take.iterdir():
-                            if path_file_audio.is_file():
-                                # print('', flush=True)
-                                # print(path_file_audio.name, flush=False)
-                                m_file = pat_file_audio.match(
-                                    path_file_audio.name)
-                                if m_file is not None:
-                                    # print('...okay', flush=True)
-                                    #  Figure out the labels and annotations
-                                    g_file = m_file.groupdict()
-                                    label_instrument = g_file['instrument']
-                                    idx_instrument = _MAP_LABEL_INSTRUMENTS[label_instrument]
-                                    # ids have to be [1, max], idx=0 is a placeholder
-                                    idx_duo = int(g_file['duo'])
-                                    idx_take = int(g_file['take'])
-                                    idx_channel = int(g_file['channel'])
-                                    df_ann = ann_dict[idx_duo][idx_take]
-                                    # some safety check
-                                    assert idx_duo == idx_dir_duo,   "Inconsistent naming/directory scheme"
-                                    assert idx_take == idx_dir_take, "Inconsistent naming/directory scheme"
-                                    #
-                                    example_whole = self._load_example_unsplit(
-                                        path_file_audio, df_ann, idx_duo, idx_take, idx_channel, idx_instrument)
-                                    #  Divide the audio into blocks of required length
-                                    list_example_split = self._split_example(
-                                        example_whole)
-                                    # add to total channels
-                                    list_channel_examples[idx_channel -
-                                                          1] = list_example_split
-                        nb_splits = len(list_channel_examples[0])
-                        # Swap splits <-> channels in list of lists' dimensions.
-                        list_channel_examples_swapped = [
-                            [[] for _b in range(_NB_CHANNELS)] for _a in range(nb_splits)]
-                        for channel, list_examples_split in enumerate(list_channel_examples):
-                            assert list_examples_split is not None, f'Example Duo {idx_duo} / Take {idx_take} -- Channel {channel+1} was not found!'
-                            for idx_split, example in enumerate(list_examples_split):
-                                list_channel_examples_swapped[idx_split][channel] = example
-                        # merge all channels in a single example of each split
-                        list_examples_merged = [{
-                            'audio': np.concatenate([example['audio'] for example in list_examples], axis=-1),
-                            'annotations': {
-                                'x_play': np.concatenate([example['annotations']['x_play'] for example in list_examples], axis=-1),
-                                'y_play': np.concatenate([example['annotations']['y_play'] for example in list_examples], axis=-1),
-                                'dir_play': np.concatenate([example['annotations']['dir_play'] for example in list_examples], axis=-1),
-                            },
-                            'labels': {
-                                'idx_duo': list_examples[0]['labels']['idx_duo'],
-                                'idx_take': list_examples[0]['labels']['idx_take'],
-                                'idx_channel': np.stack([example['labels']['idx_channel'] for example in list_examples], axis=-1),
-                                'idx_instrument': np.stack([example['labels']['idx_instrument'] for example in list_examples], axis=-1)
-                            }
-                        } for list_examples in list_channel_examples_swapped]
-                        for idx_split, list_example_split in enumerate(list_examples_merged):
-                            yield f'{path_dir_duo.name}_{idx_split}', list_example_split
+            if m_dir_duo is None:
+                continue
+            g_dir_duo = m_dir_duo.groupdict()
+            idx_dir_duo = int(g_dir_duo['duo'])
+            for path_dir_take in path_dir_duo.iterdir():
+                if not path_dir_take.is_dir():
+                    continue
+                m_dir_take = pat_dir_take.match(path_dir_take.name)
+                if m_dir_take is None:
+                    continue
+                g_dir_take = m_dir_take.groupdict()
+                idx_dir_take = int(g_dir_take['take'])
+                list_channel_examples = [None] * _NB_CHANNELS
+                for path_file_audio in path_dir_take.iterdir():
+                    if not path_file_audio.is_file():
+                        continue
+                    example_whole = self._load_example_unsplit(
+                        path_file_audio,
+                        ann_dict=ann_dict,
+                        idx_dir_duo=idx_dir_duo,
+                        idx_dir_take=idx_dir_take)
+                    if example_whole is None:
+                        continue
+                    #  Divide the audio into blocks of required length
+                    list_example_split = self._split_example(
+                        example_whole)
+                    # compute descriptors
+                    for dict_example in list_example_split:
+                        if _DO_BUILD_DESCRIPTOR:
+                            list_descriptors = self.compute_audio_descriptors(
+                                dict_example['audio'],
+                                rate_sample=_RATE_AUDIO,
+                                size_win=_SIZE_WINDOW_DESCRIPTOR,
+                                stride_win=_STRIDE_WINDOW_DESCRIPTOR,
+                                freq_min=_FREQ_MIN_DESCRIPTOR,
+                                freq_max=_FREQ_MAX_DESCRIPTOR
+                            )
+                        else:
+                            list_descriptors = [
+                                np.zeros(
+                                    _SIZE_BLOCK_DESCRIPTOR, dtype=dict_example['audio'].dtype)
+                                for _ in range(len(_NAMES_DESCRIPTORS))
+                            ]
+                        dict_example['descriptors'] = dict(zip(_NAMES_DESCRIPTORS, [
+                            np.expand_dims(descr, axis=-1) for descr in list_descriptors]))
+                    # add to total channels
+                    idx_channel = example_whole['labels']['idx_channel']
+                    list_channel_examples[idx_channel - 1] = list_example_split
+                nb_splits = len(list_channel_examples[0])
+                assert np.all([len(channel_examples) == nb_splits for channel_examples in list_channel_examples])
+                # Swap splits <-> channels in list of lists' dimensions.
+                list_channel_examples_swapped = [
+                    [[] for _b in range(_NB_CHANNELS)] for _a in range(nb_splits)]
+                for channel, list_examples_split in enumerate(list_channel_examples):
+                    assert list_examples_split is not None, f'Example Duo {idx_dir_duo} / Take {idx_dir_take} -- Channel {channel+1} was not found!'
+                    for idx_split, example in enumerate(list_examples_split):
+                        list_channel_examples_swapped[idx_split][channel] = example
+                # merge all channels in a single example of each split
+                list_examples_merged = [{
+                    'audio': np.stack([example['audio'] for example in list_examples], axis=-1),
+                    'annotations': {
+                        'x_play': np.stack([example['annotations']['x_play'] for example in list_examples], axis=-1),
+                        'y_play': np.stack([example['annotations']['y_play'] for example in list_examples], axis=-1),
+                        'dir_play': np.stack([example['annotations']['dir_play'] for example in list_examples], axis=-1),
+                    },
+                    'labels': {
+                        'idx_duo': list_examples[0]['labels']['idx_duo'],
+                        'idx_take': list_examples[0]['labels']['idx_take'],
+                        'idx_channel': np.stack([example['labels']['idx_channel'] for example in list_examples], axis=-1),
+                        'idx_instrument': np.stack([example['labels']['idx_instrument'] for example in list_examples], axis=-1)
+                    },
+                    'descriptors': dict(zip(_NAMES_DESCRIPTORS, [
+                        np.concatenate(
+                            [example['descriptors'][name_descriptor] for example in list_examples], axis=-1
+                        )
+                        for name_descriptor in _NAMES_DESCRIPTORS
+                    ]))
+                } for list_examples in list_channel_examples_swapped]
+                for idx_split, list_example_split in enumerate(list_examples_merged):
+                    yield f'{path_dir_duo.name}_{path_dir_take.name}_{idx_split}', list_example_split
 
-    def _split_example(self, example_whole: dict) -> List[dict]:
-        x_audio_split = self._split_droplast(
+    @classmethod
+    def _split_example(cls, example_whole: dict) -> List[dict]:
+        x_audio_split = cls._split_droplast(
             example_whole['audio'], _SIZE_EXAMPLE_AUDIO)
-        ann_x_play_split = self._split_droplast(
+        ann_x_play_split = cls._split_droplast(
             example_whole['annotations']['x_play'], _SIZE_EXAMPLE_AUDIO)
-        ann_y_play_split = self._split_droplast(
+        ann_y_play_split = cls._split_droplast(
             example_whole['annotations']['y_play'], _SIZE_EXAMPLE_AUDIO)
-        ann_dir_play_split = self._split_droplast(
+        ann_dir_play_split = cls._split_droplast(
             example_whole['annotations']['dir_play'], _SIZE_EXAMPLE_AUDIO)
         list_examples_split = []
-        names_descriptor = AudioDescriptorExtractor.get_descriptor_names()
         for i in range(x_audio_split.shape[0]):
-            list_descriptors = AudioDescriptorExtractor.compute_audio_descriptors_numpy(
-                x_audio_split[i],
-                rate_sample=_RATE_AUDIO,
-                size_win=_SIZE_WINDOW_DESCRIPTOR,
-                stride_win=_STRIDE_WINDOW_DESCRIPTOR,
-                freq_min=_FREQ_MIN_DESCRIPTOR,
-                freq_max=_FREQ_MAX_DESCRIPTOR
-            )
             list_examples_split.append({
-                'audio': np.expand_dims(x_audio_split[i], axis=-1),
+                'audio': x_audio_split[i],
                 'annotations': {
-                    'x_play': np.expand_dims(ann_x_play_split[i], axis=-1),
-                    'y_play': np.expand_dims(ann_y_play_split[i], axis=-1),
-                    'dir_play': np.expand_dims(ann_dir_play_split[i], axis=-1),
+                    'x_play': ann_x_play_split[i],
+                    'y_play': ann_y_play_split[i],
+                    'dir_play': ann_dir_play_split[i],
                 },
-                'labels': example_whole['labels'],
-                'descriptors': zip(names_descriptor, [np.expand_dim(descr, axis=-1) for descr in list_descriptors])
+                'labels': example_whole['labels']
             })
         return list_examples_split
 
-    def _load_example_unsplit(self,
+    @classmethod
+    def _load_example_unsplit(cls,
                               path_file_audio: Path,
-                              df_ann: pd.DataFrame,
-                              idx_duo: int,
-                              idx_take: int,
-                              idx_channel: int,
-                              idx_instrument: int
-                              ) -> dict:
+                              ann_dict: dict[str, Any],
+                              idx_dir_duo: int,
+                              idx_dir_take: int,
+                              ) -> Optional[dict[str, Any]]:
+
+        pat_file_audio = re.compile(_PATTERN_FILE_AUDIO)
+        if not path_file_audio.is_file():
+            return None
+        m_file = pat_file_audio.match(path_file_audio.name)
+        if m_file is None:
+            return None
         #  Figure out the labels and annotations
+        g_file = m_file.groupdict()
+        label_instrument = g_file['instrument']
+        idx_instrument = _MAP_LABEL_INSTRUMENTS[label_instrument]
+        # ids have to be [2, max], idx=0 is a placeholder
+        idx_duo = int(g_file['duo'])
+        idx_take = int(g_file['take'])
+        idx_channel = int(g_file['channel'])
+        df_ann = ann_dict[idx_duo][idx_take]
+        # some safety check
+        assert idx_duo == idx_dir_duo,   "Inconsistent naming/directory scheme"
+        assert idx_take == idx_dir_take, "Inconsistent naming/directory scheme"
         #
         x_audio = tfio.audio.decode_wav(
             path_file_audio.read_bytes(), dtype=tf.int16)
         # trancode to float
-        arr_audio = librosa.util.buf_to_float(
+        x_audio = librosa.util.buf_to_float(
             x_audio.numpy(), dtype=np.float32)
-        x_audio = tf.convert_to_tensor(arr_audio)
         #
         ann_t_play = df_ann.get('time').to_numpy()
         ann_x_play = df_ann.get(
@@ -305,11 +347,11 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
         ann_dir_play = df_ann.get(
             f'zone{idx_channel}').map(_MAP_LABELS_PLAYING).to_numpy().astype(np.int8)
         # Resample the annotations to the audio sample rate
-        ann_x_play = self._fit_annotations(
+        ann_x_play = cls._fit_annotations(
             ann_x_play, ann_t_play, x_audio)
-        ann_y_play = self._fit_annotations(
+        ann_y_play = cls._fit_annotations(
             ann_y_play, ann_t_play, x_audio)
-        ann_dir_play = self._fit_annotations(
+        ann_dir_play = cls._fit_annotations(
             ann_dir_play, ann_t_play, x_audio)
         return {
             'audio': x_audio,
@@ -344,7 +386,7 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
         nb_duos = df_ann['duo'].max()
         nb_takes = df_ann['take'].max()
         assert nb_duos <= _NB_DUOS
-        assert nb_takes <= _NB_TAKES
+        assert nb_takes <= _MAX_NB_TAKES
         for duo in range(1, nb_duos+1):
             if duo not in dict_ann.keys():
                 dict_ann[duo] = dict()
@@ -387,3 +429,100 @@ class CanonneDuos(tfds.core.GeneratorBasedBuilder):
             (np.zeros(int(_RATE_AUDIO * t_ann[0]), dtype=x_ann_fit.dtype), x_ann_fit))
         x_ann_fit.resize(x_audio.shape)
         return x_ann_fit
+
+    @classmethod
+    def compute_audio_descriptors(
+            cls,
+            x_audio: np.ndarray,
+            *,
+            rate_sample: int,
+            size_win: int,
+            stride_win: int,
+            freq_min: float,
+            freq_max: float) -> list[np.ndarray]:
+        # librosa expects time as last axis
+        x_audio = np.transpose(x_audio)
+        x_descriptor = cls.compute_audio_descriptors_numpy(
+            x_audio,
+            rate_sample=rate_sample,
+            size_win=size_win,
+            stride_win=stride_win,
+            freq_min=freq_min,
+            freq_max=freq_max
+        )
+        x_descriptor = np.transpose(x_descriptor)
+        return x_descriptor
+
+    @staticmethod
+    def compute_audio_descriptors_numpy(
+        x_audio: np.ndarray,
+        *,
+        rate_sample: int,
+        size_win: int,
+        stride_win: int,
+        freq_min: float,
+        freq_max: float,
+    ) -> list[np.ndarray]:
+
+        # librosa does not compute frame_length
+        # as time // stride
+        # so we need to remove an element (arbitrarily, the last one).
+        # see: https://github.com/librosa/librosa/issues/1278
+        x_spec = librosa.stft(
+            y=x_audio,
+            n_fft=size_win,
+            win_length=size_win,
+            hop_length=stride_win,
+            center=True
+        )
+        x_spec = x_spec[..., :-1]
+
+        x_freq_0, _, x_prob_freq = librosa.pyin(
+            y=x_audio,
+            fmin=freq_min,
+            fmax=freq_max,
+            sr=rate_sample,
+            frame_length=size_win,
+            hop_length=stride_win,
+            center=True
+        )
+        x_freq_0 = x_freq_0.astype(x_audio.dtype)[..., :-1]
+        x_prob_freq = x_prob_freq.astype(x_audio.dtype)[..., :-1]
+
+        # Functions in librosa.feature add a dimension
+        # in second-to-last position.
+        # we remove it to match the other features.
+        x_rms = librosa.feature.rms(
+            S=np.abs(x_spec),
+            frame_length=size_win,
+            hop_length=stride_win,
+            center=True
+        ).astype(x_audio.dtype)
+        x_rms = np.squeeze(x_rms, axis=-2)
+
+        x_zcr = librosa.feature.zero_crossing_rate(
+            y=x_audio,
+            frame_length=size_win,
+            hop_length=stride_win,
+            center=True
+        ).astype(x_audio.dtype)
+        x_zcr = np.squeeze(x_zcr, axis=-2)[..., :-1]
+
+        x_flatness = librosa.feature.spectral_flatness(
+            S=np.abs(x_spec),
+        ).astype(x_audio.dtype)
+        x_flatness = np.squeeze(x_flatness, axis=-2)
+
+        x_centroid = librosa.feature.spectral_centroid(
+            S=np.abs(x_spec)
+        ).astype(x_audio.dtype)
+        x_centroid = np.squeeze(x_centroid, axis=-2)
+
+        return [
+            x_freq_0,
+            x_prob_freq,
+            x_rms,
+            x_zcr,
+            x_flatness,
+            x_centroid
+        ]

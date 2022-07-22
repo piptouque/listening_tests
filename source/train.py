@@ -6,7 +6,7 @@ import tensorflow_datasets as tfds
 
 from models.common import VectorQuantiser
 from models.models import SomethingModel, JukeboxAutoEncoder, CouplingSolver
-from utils.preprocessing import AudioDescriptorsExtractor, AudioSpectrumExtractor
+from utils.preprocessing import AudioDescriptorExtractor, AudioSpectrumExtractor
 from utils.dirs import create_dirs
 from utils.config import process_config
 from utils.utils import get_args
@@ -71,13 +71,12 @@ if __name__ == '__main__':
 
         kind_features = config.data.audio.features.kind
         if kind_features == 'descriptor':
-            Extractor = AudioDescriptorsExtractor
+            Extractor = AudioDescriptorExtractor
         elif kind_features == 'spectrum':
             Extractor = AudioSpectrumExtractor
         else:
             raise NotImplementedError()
         feature_extractor = Extractor(
-            names_features=config.data.audio.features.names,
             rate_sample=config.data.audio.time.rate_sample,
             size_win=config.data.audio.time.size_win,
             stride_win=config.data.audio.time.stride_win,
@@ -180,5 +179,5 @@ if __name__ == '__main__':
             callbacks=[cb_checkpoint, cb_log],
             epochs=config.training.nb_epochs,
             steps_per_epoch=config.training.nb_steps_per_epoch,
-            validation_steps=1
+            validation_steps=1 # FIXME: with None: not enough examples in validation data set 
         )
